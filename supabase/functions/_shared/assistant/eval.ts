@@ -222,33 +222,61 @@ export async function runEval(numbers?: number[]): Promise<{ results: EvalResult
 }
 
 // The voice path end to end with the real providers, in the same fixed context: each phrase
-// is spoken by ElevenLabs, transcribed by AssemblyAI and planned, and the reply is voiced.
-// Urdu speech is written in Urdu script here: that is what a speaker of "Roman Urdu" says.
-export const VOICE_PHRASES: { text: string; language: string; means: string }[] = [
+// is spoken by ElevenLabs (or sent as a recording), transcribed by AssemblyAI and planned,
+// and the reply is voiced. Urdu speech is written in Urdu script here: that is what a
+// speaker of "Roman Urdu" says.
+export interface VoicePhrase {
+  means: string;
+  language: string;
+  text?: string;
+  /** A recording to use instead of synthesising `text` (any format AssemblyAI reads)… */
+  audio_base64?: string;
+  /** …or one of the recordings in this repository (supabase/tests/audio). */
+  audio_url?: string;
+}
+
+const FIXTURES = 'https://raw.githubusercontent.com/soomroabdullah374-hub/Deepwork/';
+
+async function recording(p: VoicePhrase): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (p.audio_base64) return Uint8Array.from(atob(p.audio_base64), (ch) => ch.charCodeAt(0));
+  if (!p.audio_url) return null;
+  if (!p.audio_url.startsWith(FIXTURES)) throw new Error('Recordings must come from this repository.');
+  const res = await fetch(p.audio_url, { signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) throw new Error(`Could not fetch the recording (${res.status}).`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+export const VOICE_PHRASES: VoicePhrase[] = [
   { text: 'کل شام سات بجے جم شامل کر دو', language: 'ur', means: 'kal shaam 7 baje gym add kar do' },
   { text: 'پیر والا پورٹفولیو سیشن جمعرات کو آٹھ بجے کر دو', language: 'ur', means: "Monday's portfolio session to Thursday 8" },
   { text: "Move Monday's portfolio session to Thursday at eight", language: 'en', means: 'English' },
 ];
 
-export async function runVoiceCheck(phrases = VOICE_PHRASES) {
+const reasonOf = (err: unknown) => (err as { extra?: { reason?: string } }).extra?.reason;
+const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+export async function runVoiceCheck(phrases: VoicePhrase[] = VOICE_PHRASES) {
   const keyterms = [...EVAL_GOALS.map((g) => g.title), ...EVAL_CONTEXT.commitments.map((c) => (c as { title: string }).title)];
   const results: Record<string, unknown>[] = [];
   for (const p of phrases) {
     const t0 = Date.now();
     try {
-      const voice = await speak(p.text, p.language);
-      const heard = await transcribe(voice.bytes, keyterms);
+      const audio = (await recording(p)) ?? (await speak(p.text ?? '', p.language)).bytes;
+      const heard = await transcribe(audio, keyterms);
       const { plan } = await planWithLlm(heard.text, EVAL_CONTEXT);
-      const reply = plan.reply_tts ? await speak(plan.reply_tts, plan.reply_language) : null;
+      let reply_voice: string;
+      try {
+        reply_voice = plan.reply_tts ? `${Math.round((await speak(plan.reply_tts, plan.reply_language)).bytes.length / 1024)} KB` : 'none';
+      } catch (err) {
+        reply_voice = `failed: ${reasonOf(err) ?? messageOf(err)}`;
+      }
       results.push({
         means: p.means, heard: heard.text, language: heard.language, confidence: heard.confidence,
         actions: plan.actions.map(compact), reply_language: plan.reply_language, reply_text: plan.reply_text,
-        reply_tts: plan.reply_tts, audio_kb: Math.round(voice.bytes.length / 1024),
-        reply_audio_kb: reply ? Math.round(reply.bytes.length / 1024) : 0, ms: Date.now() - t0,
+        reply_tts: plan.reply_tts, reply_voice, audio_kb: Math.round(audio.length / 1024), ms: Date.now() - t0,
       });
     } catch (err) {
-      const reason = (err as { extra?: { reason?: string } }).extra?.reason;
-      results.push({ means: p.means, error: err instanceof Error ? err.message : String(err), reason, ms: Date.now() - t0 });
+      results.push({ means: p.means, error: messageOf(err), reason: reasonOf(err), ms: Date.now() - t0 });
     }
   }
   return results;

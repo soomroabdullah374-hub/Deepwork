@@ -69,7 +69,7 @@ import {
 import { isAutoApplicable, MUTATING_TYPES, type ResolvedAction, resolvePlan } from '../_shared/assistant/resolve.ts';
 import { type Plan, PlanSchema } from '../_shared/assistant/schema.ts';
 import { draftPlan } from '../_shared/assistant/draft.ts';
-import { runEval, runVoiceCheck } from '../_shared/assistant/eval.ts';
+import { runEval, runVoiceCheck, type VoicePhrase } from '../_shared/assistant/eval.ts';
 import { hasCronSecret } from '../_shared/cron.ts';
 
 type Params = Record<string, string>;
@@ -866,7 +866,9 @@ route('POST', '/assistant/eval', async (ctx) => {
 // The voice path end to end with the real providers (spends credits, so cron secret only).
 route('POST', '/assistant/voice-check', async (ctx) => {
   if (!(await hasCronSecret(ctx.req))) throw new HttpError(401, 'unauthorized', 'Not allowed.');
-  return json({ results: await runVoiceCheck(), provider: config.llm.label, model: config.llm.model });
+  const body = await readJson<{ phrases?: VoicePhrase[] }>(ctx.req);
+  const phrases = Array.isArray(body.phrases) && body.phrases.length ? body.phrases.slice(0, 4) : undefined;
+  return json({ results: await runVoiceCheck(phrases), provider: config.llm.label, model: config.llm.model });
 });
 
 // ───────────────────────── server
