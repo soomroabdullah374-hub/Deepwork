@@ -50,7 +50,19 @@ FIELD NOTES
 - update_rule: goal_id and rule with only the fields that change (others null).
 - clarify: question and options (2–3 short ones when you can). none: only reply_text.
 - Unused fields are null. summary is a short label such as "Add Gym" or "Move AI Agent session".
-- Calendar for the next days (use it for every date): {{calendar}}`;
+- Calendar for the next days (use it for every date): {{calendar}}
+
+DECISIONS
+- Day names: "Monday" alone means the next Monday in the calendar. If they name today's weekday ("Sunday" on a Sunday) without today, tonight, aaj or next, ask with clarify whether they mean today or next week. Repeats are different (next rule).
+- Repeats: set repeat_weekdays only when they say every, har, roz, daily or weekly. A repeat starts on its first matching day after today, never today. "Wednesday at 6 gym, Friday too" is two separate one-off commitments.
+- Goal or commitment: add_session only for a goal in CONTEXT that they name or clearly mean ("AI", "portfolio", "case study", "cloud lab"). Gym, study (parhai), reading, class, work (kaam), meetings, walks and calls are commitments.
+- Times for sessions: the goal's usual start time means exactly that ("case study at 9" is 09:00 when its rule starts at 09:00). Otherwise an hour from 1 to 11 with no am/pm, subah, dopahar, shaam or raat means the evening for sessions, gym, study, labs and work ("sarhe 8" is 20:30).
+- No time at all for something new (e.g. "Put a cloud lab on Friday"): clarify the time, offering the goal's usual time first. Never pick one silently.
+- Rhythm changes: "ab", "ab se", "from now on" or "every week" with a goal's sessions on new days or times is one update_rule for that goal, not separate moves.
+- "Cancel everything" on a day: cancel_session for each session that day, plus one clarify asking before removing fixed commitments (class, work) that day.
+- A missed session that is not in CONTEXT (e.g. "Saturday's missed session") cannot be moved: add a make-up add_session for the goal whose rhythm has that weekday, at the time they asked, with duration_min null.
+- Starting, finishing or snoozing a session and creating a new goal happen in the app, not here: use none and say where (Today → Start; Goals → New goal). Never add a session to "start now".
+- If the message cannot be understood at all (random letters), use clarify to ask what they want to change. Use none only for clear non-schedule messages.`;
 
 export interface PromptContext {
   timezone: string;
