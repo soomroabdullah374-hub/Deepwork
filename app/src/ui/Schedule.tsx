@@ -4,7 +4,7 @@ import { type ReactNode, useEffect } from 'react';
 import { Pressable, View } from 'react-native';
 import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withDelay, withRepeat, withTiming } from 'react-native-reanimated';
 import { EASE } from '@/lib/motion';
-import { dayRibbon, holdsTime } from '@/lib/model';
+import { dayRibbon, holdsTime, shortLabel } from '@/lib/model';
 import { fonts, useTheme } from '@/lib/theme';
 import { addDays, localDate, localMinutes, MONDAY_FIRST, WEEKDAY_LETTERS } from '@/lib/time';
 import type { Block } from '@/lib/types';
@@ -172,7 +172,7 @@ export function WeekGrid({
                         right: 2,
                         borderRadius: 6,
                         padding: 3,
-                        backgroundColor: session ? (b.status === 'done' ? c.success : c.button) : c.sand,
+                        backgroundColor: session ? c.button : c.sand,
                         borderWidth: session ? 0 : 1,
                         borderColor: c.lineStrong,
                         opacity: b.status === 'missed' ? 0.55 : 1,
@@ -191,14 +191,6 @@ export function WeekGrid({
       </View>
     </View>
   );
-}
-
-/** "Finish AI Agent portfolio project" → "AI"; "Training class" → "Class". */
-export function shortLabel(title: string): string {
-  const words = title.replace(/[^\p{L}\p{N}\s]/gu, '').split(/\s+/).filter(Boolean);
-  const skip = new Set(['finish', 'write', 'the', 'a', 'an', 'my', 'do', 'training', 'learn', 'build', 'study']);
-  const pick = words.find((w) => !skip.has(w.toLowerCase())) ?? words[0] ?? '';
-  return pick.length > 6 ? pick.slice(0, 5) : pick.charAt(0).toUpperCase() + pick.slice(1);
 }
 
 /** Rhythm step: 7 columns 08–22, existing blocks grey, the new sessions in Kiln. */

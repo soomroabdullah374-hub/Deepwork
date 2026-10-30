@@ -255,3 +255,17 @@ export function dayRibbon(blocks: Block[], now: Date, tz: string, from = 6 * 60,
 export function weekdayName(date: string): string {
   return WEEKDAYS_LONG[weekdayOf(date)];
 }
+
+/** A one-word label for a small block: "Finish AI Agent portfolio project" → "AI",
+ *  "Write the freelance case study" → "Case", "Cloud Data Engineering labs" → "Labs". */
+export function shortLabel(title: string): string {
+  // letters, digits and spaces only (Latin and Urdu script)
+  const words = title.replace(/[^A-Za-z0-9\u00C0-\u024F\u0600-\u06FF\s]/g, '').split(/\s+/).filter(Boolean);
+  const skip = new Set(['finish', 'write', 'the', 'a', 'an', 'my', 'do', 'training', 'learn', 'build', 'study', 'of', 'and', 'for', 'to']);
+  const candidates = words.filter((w) => !skip.has(w.toLowerCase()) && w.length >= 2);
+  const pool = candidates.length ? candidates : words;
+  // the shortest word says the most in the least space; ties go to the later word
+  const pick = pool.reduce((best, w) => (w.length <= best.length ? w : best), pool[0] ?? '');
+  const word = pick.length > 6 ? pick.slice(0, 6) : pick;
+  return word === word.toUpperCase() ? word : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+}

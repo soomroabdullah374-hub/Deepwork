@@ -2,10 +2,10 @@
 // JWT lives in memory and is refreshed through the API before it runs out.
 
 import * as Linking from 'expo-linking';
-import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import { useSyncExternalStore } from 'react';
 import { ApiError, call } from './http';
+import { getItem, removeItem, setItem } from './storage';
 import type { AuthResult, AuthUser } from './types';
 
 const SESSION_KEY = 'deepwork.session';
@@ -61,16 +61,16 @@ function decodeExp(token: string): number {
 async function save(result: AuthResult) {
   session = result.session;
   jwt = { token: result.jwt, exp: decodeExp(result.jwt) };
-  await SecureStore.setItemAsync(SESSION_KEY, result.session);
-  await SecureStore.setItemAsync(USER_KEY, JSON.stringify(result.user));
+  await setItem(SESSION_KEY, result.session);
+  await setItem(USER_KEY, JSON.stringify(result.user));
   set({ status: 'signed_in', user: result.user });
 }
 
 async function clear() {
   session = null;
   jwt = null;
-  await SecureStore.deleteItemAsync(SESSION_KEY).catch(() => undefined);
-  await SecureStore.deleteItemAsync(USER_KEY).catch(() => undefined);
+  await removeItem(SESSION_KEY).catch(() => undefined);
+  await removeItem(USER_KEY).catch(() => undefined);
   set({ status: 'signed_out', user: null });
   for (const h of signOutHandlers) await Promise.resolve(h()).catch(() => undefined);
 }
@@ -105,8 +105,8 @@ export async function getToken(force = false): Promise<string> {
 
 /** Restore the saved session on launch. Offline launches keep the cached user. */
 export async function bootstrap(): Promise<void> {
-  session = await SecureStore.getItemAsync(SESSION_KEY).catch(() => null);
-  const cached = await SecureStore.getItemAsync(USER_KEY).catch(() => null);
+  session = await getItem(SESSION_KEY).catch(() => null);
+  const cached = await getItem(USER_KEY).catch(() => null);
   const user = cached ? (JSON.parse(cached) as AuthUser) : null;
   if (!session) {
     set({ status: 'signed_out', user: null });

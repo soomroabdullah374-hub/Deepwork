@@ -4,7 +4,7 @@ import { radius, size, useTheme } from '@/lib/theme';
 import { Icon, type IconName } from './Icon';
 import { T } from './Text';
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'outline' | 'ink' | 'danger' | 'link';
+type Variant = 'primary' | 'secondary' | 'ghost' | 'outline' | 'ink' | 'dark' | 'danger' | 'link';
 
 export function Button({
   label,
@@ -36,6 +36,7 @@ export function Button({
     ghost: { bg: 'transparent', fg: c.text },
     outline: { bg: 'transparent', fg: c.text, border: c.lineStrong },
     ink: { bg: scheme === 'light' ? c.inverseSurface : c.surface, fg: '#FAF9F5', border: scheme === 'dark' ? c.lineStrong : undefined },
+    dark: { bg: '#30302E', fg: '#FAF9F5' },
     danger: { bg: 'transparent', fg: c.danger, border: c.danger },
     link: { bg: 'transparent', fg: c.button },
   };

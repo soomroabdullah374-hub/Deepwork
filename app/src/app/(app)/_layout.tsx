@@ -5,6 +5,7 @@ import * as Notifications from 'expo-notifications';
 import * as Linking from 'expo-linking';
 import { Redirect, router, Stack } from 'expo-router';
 import { useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { showBanner } from '@/lib/banner';
@@ -25,8 +26,12 @@ function routeFor(url: string | undefined): string | null {
   return '/today';
 }
 
+// Notification responses only exist on the phone (the browser preview has none).
+const useLastResponse: typeof Notifications.useLastNotificationResponse =
+  Platform.OS === 'web' ? () => undefined : Notifications.useLastNotificationResponse;
+
 function useNotificationResponses(enabled: boolean) {
-  const response = Notifications.useLastNotificationResponse();
+  const response = useLastResponse();
   const handled = useRef<string | null>(null);
   useEffect(() => {
     if (!enabled || !response) return;
@@ -64,7 +69,7 @@ function useNotificationResponses(enabled: boolean) {
 export default function AppLayout() {
   const auth = useAuth();
   const { c } = useTheme();
-  const state = useAppState();
+  const state = useAppState(auth.status === 'signed_in');
   const data = state.data;
 
   useNotificationResponses(Boolean(data));
@@ -86,6 +91,7 @@ export default function AppLayout() {
   }, [data]);
 
   if (auth.status === 'signed_out') return <Redirect href="/sign-in" />;
+  if (auth.status === 'loading') return <Loading />;
   if (!data) {
     if (state.error) {
       const signedOut = state.error instanceof ApiError && state.error.status === 401;

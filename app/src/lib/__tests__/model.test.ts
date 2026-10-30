@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   cadenceLetters, dayRibbon, goalProgress, greeting, missedSessions, nextSession, nudgeTime,
-  overlapCount, sessionsBetween, todaySummary, weekStats,
+  overlapCount, sessionsBetween, shortLabel, todaySummary, weekStats,
 } from '../model';
 import { block, makeState, NOW, TZ } from './fixtures';
 
@@ -63,5 +63,15 @@ describe('Insights', () => {
     expect(w.days.map((d) => d.letter).join('')).toBe('MTWTFSS');
     expect(w.days[6].isToday).toBe(true);
     expect(w.days[5].missedMin).toBe(90);
+  });
+});
+
+describe('labels', () => {
+  it('shortens titles for small blocks', () => {
+    expect(shortLabel('Finish AI Agent portfolio project')).toBe('AI');
+    expect(shortLabel('Write the freelance case study')).toBe('Case');
+    expect(shortLabel('Cloud Data Engineering labs')).toBe('Labs');
+    expect(shortLabel('Training class')).toBe('Class');
+    expect(shortLabel('Gym')).toBe('Gym');
   });
 });

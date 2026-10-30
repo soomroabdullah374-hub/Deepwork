@@ -205,7 +205,7 @@ export default function NewGoal() {
                   Edit, reorder or remove anything.
                 </T>
               </View>
-              <Button label="Redraft" variant="ghost" compact style={{ backgroundColor: '#30302E' }} disabled={drafting} onPress={draft} />
+              <Button label="Redraft" variant="dark" compact disabled={drafting} onPress={draft} />
             </Card>
             {warning ? (
               <View style={{ flexDirection: 'row', gap: 8 }}>

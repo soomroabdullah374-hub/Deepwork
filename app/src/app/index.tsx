@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
-import { bootstrap, useAuth } from '@/lib/auth';
+import { useAuth } from '@/lib/auth';
 import { useRise } from '@/lib/motion';
 import { getFlag } from '@/lib/prefs';
 import { fonts } from '@/lib/theme';
@@ -26,7 +26,6 @@ export default function Launch() {
   const bar = useSharedValue(0);
 
   useEffect(() => {
-    bootstrap().catch(() => undefined);
     const t1 = setTimeout(() => setShowWords(true), reduced ? 0 : 700);
     const t2 = setTimeout(() => setMinTimeDone(true), 1200);
     if (!reduced) bar.value = withRepeat(withTiming(1, { duration: 1100, easing: Easing.inOut(Easing.quad) }), -1, false);

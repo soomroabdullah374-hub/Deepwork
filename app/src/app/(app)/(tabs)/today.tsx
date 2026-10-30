@@ -84,9 +84,8 @@ function UpNext({ state, block, now }: { state: AppState; block: Block; now: Dat
         {block.status !== 'in_progress' ? (
           <Button
             label="Snooze"
-            variant="ghost"
+            variant="dark"
             loading={snooze.isPending}
-            style={{ backgroundColor: '#30302E' }}
             onPress={() =>
               snooze.mutate(undefined, {
                 onSuccess: () => showBanner('Snoozed for 10 minutes.'),

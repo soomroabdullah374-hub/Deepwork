@@ -39,6 +39,7 @@ export default function Onboarding() {
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         keyExtractor={(s) => s.key}
+        getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
         onMomentumScrollEnd={(e) => setIndex(Math.round(e.nativeEvent.contentOffset.x / width))}
         renderItem={({ item, index: i }) => (
           <View style={{ width }}>

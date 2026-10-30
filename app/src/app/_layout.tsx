@@ -9,7 +9,7 @@ import { View } from 'react-native';
 import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { onSignOut } from '@/lib/auth';
+import { bootstrap, onSignOut } from '@/lib/auth';
 import { useBanner } from '@/lib/banner';
 import { clearReminders, setupNotifications } from '@/lib/notifications';
 import { loadPrefs, useThemePreference } from '@/lib/prefs';
@@ -20,6 +20,8 @@ import { Banner } from '@/ui';
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 loadPrefs().catch(() => undefined);
 setupNotifications().catch(() => undefined);
+// Restore the saved session for every entry point (launch, deep links, notification taps).
+bootstrap().catch(() => undefined);
 onSignOut(async () => {
   queryClient.clear();
   await clearReminders();

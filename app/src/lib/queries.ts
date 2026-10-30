@@ -23,15 +23,21 @@ RNAppState.addEventListener('change', (s) => focusManager.setFocused(s === 'acti
 
 export const STATE_KEY = ['state'] as const;
 
-export function useAppState() {
-  return useQuery({ queryKey: STATE_KEY, queryFn: () => api.state(), refetchInterval: 5 * 60_000 });
+export function useAppState(enabled = true) {
+  return useQuery({ queryKey: STATE_KEY, queryFn: () => api.state(), refetchInterval: 5 * 60_000, enabled });
 }
 
-/** The state once loaded (screens below the loading gate can rely on it). */
+let lastState: AppState | null = null;
+
+/**
+ * The state once loaded. Screens live below the loading gate in (app)/_layout, and the
+ * last good copy covers the moment the cache is cleared on sign-out.
+ */
 export function useLoadedState(): AppState {
   const { data } = useAppState();
-  if (!data) throw new Error('state not loaded');
-  return data;
+  if (data) lastState = data;
+  if (!lastState) throw new Error('state not loaded');
+  return lastState;
 }
 
 /** A mutation that refreshes the app state when it succeeds. */

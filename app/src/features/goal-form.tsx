@@ -77,6 +77,10 @@ export function MonthCalendar({ value, onChange, minDate }: { value: string | nu
   const { c } = useTheme();
   const start = value ?? minDate;
   const [month, setMonth] = useState(start.slice(0, 7));
+  // follow a date picked elsewhere (the quick-pick chips)
+  useEffect(() => {
+    if (value) setMonth(value.slice(0, 7));
+  }, [value]);
   const [y, m] = month.split('-').map(Number);
   const first = `${month}-01`;
   const days = Number(lastOfMonth(first).slice(8));
