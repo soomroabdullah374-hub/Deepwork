@@ -55,7 +55,11 @@ async function sendPush(token: string, job: PushJob): Promise<'sent' | 'bad_toke
   );
   if (res.ok) return 'sent';
   const text = await res.text();
-  if (res.status === 404 || /UNREGISTERED|INVALID_ARGUMENT.*registration/i.test(text)) return 'bad_token';
+  // Gone (404 / UNREGISTERED), malformed (400 "…registration token…") or from another
+  // Firebase project (SENDER_ID_MISMATCH): the token will never work again.
+  if (res.status === 404 || /UNREGISTERED|SENDER_ID_MISMATCH/.test(text) || (res.status === 400 && /registration token/i.test(text))) {
+    return 'bad_token';
+  }
   console.error('fcm send failed', res.status, text.slice(0, 200));
   return 'failed';
 }
