@@ -124,9 +124,15 @@ export function sessionsBetween(weekdays: number[], from: string, to: string): n
   return n;
 }
 
+/** The goal's start date while it is still ahead, else null. */
+export function startsLater(goal: Pick<Goal, 'start_date'>, today: string): string | null {
+  return goal.start_date && goal.start_date > today ? goal.start_date : null;
+}
+
 /** "Deep work · session 3 of 22" numbers for a goal. */
 export function sessionNumber(goal: Goal, tz: string): { n: number; of: number } {
-  const start = addDays(localDate(goal.created_at, tz), -1);
+  const created = localDate(goal.created_at, tz);
+  const start = addDays(goal.start_date && goal.start_date > created ? goal.start_date : created, -1);
   const total = goal.rule ? sessionsBetween(goal.rule.weekdays, start, goal.deadline) : 0;
   const n = goal.sessions_done + 1;
   return { n, of: Math.max(total, n) };

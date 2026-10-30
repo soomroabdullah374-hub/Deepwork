@@ -26,6 +26,7 @@ const paths: Record<string, (fill: string) => React.ReactNode> = {
   bars: () => <Path d="M6 20v-7M12 20V5M18 20v-10" />,
   sliders: () => <Path d="M21 5h-7M10 5H3M21 12h-9M8 12H3M21 19h-5M12 19H3M14 3v4M8 10v4M16 17v4" />,
   plus: () => <Path d="M12 5v14M5 12h14" />,
+  minus: () => <Path d="M5 12h14" />,
   chevronLeft: () => <Path d="M15 18l-6-6 6-6" />,
   chevronRight: () => <Path d="M9 18l6-6-6-6" />,
   chevronDown: () => <Path d="M6 9l6 6 6-6" />,

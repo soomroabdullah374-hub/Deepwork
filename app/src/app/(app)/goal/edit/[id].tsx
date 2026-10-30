@@ -1,4 +1,4 @@
-// Edit goal: title, why, deadline, plan and rhythm; pause, resume, finish or delete.
+// Edit goal: title, why, start day and deadline, plan and rhythm; pause, resume, finish or delete.
 
 import { useQueryClient } from '@tanstack/react-query';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -6,9 +6,9 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
 import {
   DeadlineSummary,
+  GoalDates,
   type MilestoneDraft,
   MilestoneEditor,
-  MonthCalendar,
   newKey,
   type RhythmDraft,
   RhythmEditor,
@@ -31,7 +31,11 @@ export default function EditGoal() {
 
   const [title, setTitle] = useState(goal?.title ?? '');
   const [why, setWhy] = useState(goal?.why ?? '');
-  const [deadline, setDeadline] = useState(goal?.deadline ?? addDays(today, 30));
+  // a start that has passed shows as today; it only changes if a new day is picked
+  const firstStart = goal?.start_date && goal.start_date > today ? goal.start_date : today;
+  const [start, setStart] = useState(firstStart);
+  const [deadline, setDeadline] = useState<string | null>(goal?.deadline ?? addDays(today, 30));
+  const startDate = start > today ? start : null;
   const [milestones, setMilestones] = useState<MilestoneDraft[]>(
     (goal?.milestones ?? []).map((m) => ({ key: newKey(), id: m.id, title: m.title, done: Boolean(m.done_at) })),
   );
@@ -42,7 +46,7 @@ export default function EditGoal() {
   );
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const { result: check, checking } = useRhythmCheck(rhythm, goal?.id);
+  const { result: check, checking } = useRhythmCheck(rhythm, goal?.id, { start: startDate, until: deadline });
 
   if (!goal) {
     return (
@@ -79,10 +83,11 @@ export default function EditGoal() {
     run(
       'save',
       async () => {
-        const patch: { title?: string; why?: string | null; deadline?: string } = {};
+        const patch: { title?: string; why?: string | null; start_date?: string | null; deadline?: string } = {};
         if (title.trim() !== goal.title) patch.title = title.trim();
         if ((why.trim() || null) !== goal.why) patch.why = why.trim() || null;
-        if (deadline !== goal.deadline) patch.deadline = deadline;
+        if (start !== firstStart) patch.start_date = startDate;
+        if (deadline && deadline !== goal.deadline) patch.deadline = deadline;
         if (Object.keys(patch).length) await api.updateGoal(goal.id, patch);
         const before = goal.milestones.map((m) => `${m.id}:${m.title}`).join('|');
         const after = milestones.filter((m) => m.title.trim()).map((m) => `${m.id}:${m.title.trim()}`).join('|');
@@ -104,7 +109,7 @@ export default function EditGoal() {
         footer={
           <Button
             label={clashes ? `Fix ${clashes} clash${clashes === 1 ? '' : 'es'} to save` : 'Save changes'}
-            disabled={title.trim().length < 3 || clashes > 0 || (ruleChanged && checking) || rhythm.weekdays.length === 0}
+            disabled={title.trim().length < 3 || !deadline || clashes > 0 || (ruleChanged && checking) || rhythm.weekdays.length === 0}
             loading={busy === 'save'}
             onPress={saveAll}
           />
@@ -114,15 +119,33 @@ export default function EditGoal() {
         <Field label="Goal" value={title} onChangeText={(t) => setTitle(t.slice(0, 80))} counter={`${title.length}/80`} />
         <Field label="Why it matters · optional" value={why} onChangeText={(t) => setWhy(t.slice(0, 500))} multiline />
 
-        <SectionTitle>Deadline</SectionTitle>
-        <MonthCalendar value={deadline} onChange={setDeadline} minDate={addDays(today, 1)} />
-        <DeadlineSummary today={today} deadline={deadline} />
+        <SectionTitle>Start and deadline</SectionTitle>
+        <GoalDates
+          today={today}
+          start={start}
+          deadline={deadline}
+          firstPick="end"
+          onChange={(s, d) => {
+            setStart(s);
+            setDeadline(d);
+          }}
+        />
+        {deadline ? <DeadlineSummary today={today} start={start} deadline={deadline} /> : null}
 
         <SectionTitle>Plan</SectionTitle>
         <MilestoneEditor items={milestones} onChange={setMilestones} />
 
         <SectionTitle>Rhythm</SectionTitle>
-        <RhythmEditor state={state} rhythm={rhythm} onChange={setRhythm} deadline={deadline} check={ruleChanged ? check : null} checking={ruleChanged && checking} excludeGoal={goal.id} />
+        <RhythmEditor
+          state={state}
+          rhythm={rhythm}
+          onChange={setRhythm}
+          startDate={startDate}
+          deadline={deadline ?? goal.deadline}
+          check={ruleChanged ? check : null}
+          checking={ruleChanged && checking}
+          excludeGoal={goal.id}
+        />
 
         <SectionTitle>Status</SectionTitle>
         <Card style={{ gap: 10 }}>

@@ -1,4 +1,4 @@
-// [06–09] New goal: Goal · Deadline · Plan · Rhythm.
+// [06–09] New goal: Goal · Deadline (start day, then deadline) · Plan · Rhythm.
 
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -6,11 +6,10 @@ import { ActivityIndicator, KeyboardAvoidingView, Platform, View } from 'react-n
 import Animated, { FadeIn, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import {
   DeadlineSummary,
-  deadlineChoices,
   DEFAULT_RHYTHM,
+  GoalDates,
   type MilestoneDraft,
   MilestoneEditor,
-  MonthCalendar,
   newKey,
   RhythmEditor,
   useRhythmCheck,
@@ -20,9 +19,9 @@ import { showBanner } from '@/lib/banner';
 import { errorMessage } from '@/lib/http';
 import { useChange, useLoadedState } from '@/lib/queries';
 import { fonts, useTheme } from '@/lib/theme';
-import { addDays, localDate } from '@/lib/time';
+import { localDate } from '@/lib/time';
 import { useVoice } from '@/lib/voice';
-import { Button, Card, Chip, Field, Icon, Screen, T, TopBar } from '@/ui';
+import { Button, Card, Field, Icon, Screen, T, TopBar } from '@/ui';
 
 const STEPS = ['Goal', 'Deadline', 'Plan', 'Rhythm'] as const;
 
@@ -59,13 +58,16 @@ export default function NewGoal() {
   const [step, setStep] = useState(0);
   const [title, setTitle] = useState('');
   const [why, setWhy] = useState('');
+  const [start, setStart] = useState(today);
   const [deadline, setDeadline] = useState<string | null>(null);
+  // sent only when the goal starts after today
+  const startDate = start > today ? start : null;
   const [milestones, setMilestones] = useState<MilestoneDraft[]>([]);
   const [drafting, setDrafting] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [drafted, setDrafted] = useState(false);
   const [rhythm, setRhythm] = useState(DEFAULT_RHYTHM);
-  const { result: check, checking } = useRhythmCheck(rhythm);
+  const { result: check, checking } = useRhythmCheck(rhythm, undefined, { start: startDate, until: deadline });
   const voice = useVoice();
   const create = useChange(api.createGoal);
 
@@ -73,7 +75,13 @@ export default function NewGoal() {
     if (!deadline) return;
     setDrafting(true);
     try {
-      const d = await api.draftPlan({ title: title.trim(), why: why.trim() || undefined, deadline, rule: { weekdays: rhythm.weekdays, duration_min: rhythm.duration_min } });
+      const d = await api.draftPlan({
+        title: title.trim(),
+        why: why.trim() || undefined,
+        start_date: startDate,
+        deadline,
+        rule: { weekdays: rhythm.weekdays, duration_min: rhythm.duration_min },
+      });
       setMilestones(d.milestones.map((m) => ({ key: newKey(), title: m.title })));
       setWarning(d.warning);
       setDrafted(true);
@@ -109,7 +117,7 @@ export default function NewGoal() {
 
   const canContinue = [
     title.trim().length >= 3,
-    Boolean(deadline && deadline > today),
+    Boolean(deadline && deadline > today && deadline >= start),
     milestones.some((m) => m.title.trim()),
     rhythm.weekdays.length > 0 && !checking && (check?.clashes.length ?? 0) === 0,
   ][step];
@@ -120,6 +128,7 @@ export default function NewGoal() {
       {
         title: title.trim(),
         why: why.trim() || undefined,
+        start_date: startDate,
         deadline,
         milestones: milestones.filter((m) => m.title.trim()).map((m) => ({ title: m.title.trim() })),
         rule: rhythm,
@@ -134,7 +143,7 @@ export default function NewGoal() {
     );
   };
 
-  const questions = ['What do you want to finish?', 'When is it due?', 'Break it into milestones', 'Set your rhythm'];
+  const questions = ['What do you want to finish?', 'When do you start, and when is it due?', 'Break it into milestones', 'Set your rhythm'];
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -183,13 +192,16 @@ export default function NewGoal() {
 
         {step === 1 ? (
           <Animated.View entering={FadeIn.duration(220)} style={{ gap: 16 }}>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              {deadlineChoices(today).map((ch) => (
-                <Chip key={ch.label} label={ch.label} selected={deadline === ch.date} onPress={() => setDeadline(ch.date)} />
-              ))}
-            </View>
-            <MonthCalendar value={deadline} onChange={setDeadline} minDate={addDays(today, 1)} />
-            {deadline ? <DeadlineSummary today={today} deadline={deadline} /> : <T tone="secondary">Pick a day after today.</T>}
+            <GoalDates
+              today={today}
+              start={start}
+              deadline={deadline}
+              onChange={(s, d) => {
+                setStart(s);
+                setDeadline(d);
+              }}
+            />
+            {deadline ? <DeadlineSummary today={today} start={start} deadline={deadline} /> : null}
           </Animated.View>
         ) : null}
 
@@ -221,7 +233,15 @@ export default function NewGoal() {
 
         {step === 3 && deadline ? (
           <Animated.View entering={FadeIn.duration(220)}>
-            <RhythmEditor state={state} rhythm={rhythm} onChange={setRhythm} deadline={deadline} check={check} checking={checking} />
+            <RhythmEditor
+              state={state}
+              rhythm={rhythm}
+              onChange={setRhythm}
+              startDate={startDate}
+              deadline={deadline}
+              check={check}
+              checking={checking}
+            />
           </Animated.View>
         ) : null}
       </Screen>

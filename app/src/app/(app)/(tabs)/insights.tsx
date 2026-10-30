@@ -24,7 +24,9 @@ function Bar({ planned, done, missed, max, today }: { planned: number; done: num
   const p = useDraw(500);
   const H = 96;
   const h = (m: number) => (max > 0 ? (m / max) * H : 0);
-  const grow = useAnimatedStyle(() => ({ height: h(done) * p.value }));
+  // Worklets run on the UI thread and can't call `h`: hand them the number instead.
+  const doneHeight = h(done);
+  const grow = useAnimatedStyle(() => ({ height: doneHeight * p.value }));
   return (
     <View style={{ height: H, width: 22, justifyContent: 'flex-end' }}>
       {planned > 0 ? <View style={{ position: 'absolute', bottom: 0, width: 22, height: h(planned), borderRadius: 4, backgroundColor: c.sand }} /> : null}

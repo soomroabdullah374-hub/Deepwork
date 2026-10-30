@@ -17,7 +17,7 @@ export function block(id: string, kind: Block['kind'], title: string, start: str
 }
 
 const goal = (id: string, title: string, weekdays: number[], start: string, minutes: number, deadline: string, done: number, total: number): Goal => ({
-  id, title, why: null, deadline, status: 'active', created_at: '2026-10-05T00:00:00Z',
+  id, title, why: null, start_date: null, deadline, status: 'active', created_at: '2026-10-05T00:00:00Z',
   rule: { goal_id: id, weekdays, start_time: `${start}:00`, duration_min: minutes, lead_min: 10 },
   milestones: Array.from({ length: total }, (_, i) => ({ id: `${id}-m${i}`, position: i, title: `Step ${i + 1}`, done_at: i < done ? '2026-10-20T00:00:00Z' : null })),
   sessions_done: 2, minutes_done: 175,

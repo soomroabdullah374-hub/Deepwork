@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { cadenceLetters, daysLeft, goalNextSession, goalProgress, milestonesDone } from '@/lib/model';
+import { cadenceLetters, daysLeft, goalNextSession, goalProgress, milestonesDone, startsLater } from '@/lib/model';
 import { useRise } from '@/lib/motion';
 import { useLoadedState, useNow } from '@/lib/queries';
 import { fonts, screenPadding, useTheme } from '@/lib/theme';
@@ -22,6 +22,7 @@ function GoalCard({ state, goal, index, now }: { state: AppState; goal: Goal; in
   const days = daysLeft(goal, now, tz);
   const nextDay = next ? localDate(next.starts_at, tz) : null;
   const isToday = nextDay === localDate(now, tz);
+  const startDay = startsLater(goal, localDate(now, tz));
   return (
     <Animated.View style={rise}>
       <Card onPress={() => router.push(`/goal/${goal.id}`)} accessibilityLabel={`${goal.title}, ${Math.round(pct * 100)} percent`}>
@@ -32,7 +33,7 @@ function GoalCard({ state, goal, index, now }: { state: AppState; goal: Goal; in
           <View style={{ flex: 1, gap: 4 }}>
             <T variant="cardTitle">{goal.title}</T>
             <T variant="caption" tone="secondary">
-              {`Due ${shortDate(goal.deadline)} · ${days} day${days === 1 ? '' : 's'} · ${milestonesDone(goal)} of ${goal.milestones.length} milestones`}
+              {`${startDay ? `Starts ${shortDate(startDay)} · ` : ''}Due ${shortDate(goal.deadline)} · ${days} day${days === 1 ? '' : 's'} · ${milestonesDone(goal)} of ${goal.milestones.length} milestones`}
             </T>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
               {next ? (
@@ -43,7 +44,13 @@ function GoalCard({ state, goal, index, now }: { state: AppState; goal: Goal; in
                 />
               ) : (
                 <T variant="caption" tone="secondary">
-                  {goal.status === 'active' ? 'No session in the next two weeks' : goal.status === 'paused' ? 'Paused' : 'Finished'}
+                  {goal.status === 'paused'
+                    ? 'Paused'
+                    : goal.status === 'done'
+                      ? 'Finished'
+                      : startDay
+                        ? `Starts ${shortDate(startDay)}`
+                        : 'No session in the next two weeks'}
                 </T>
               )}
               {goal.rule ? (

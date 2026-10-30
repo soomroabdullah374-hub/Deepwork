@@ -6,10 +6,10 @@ import { Pressable, View } from 'react-native';
 import { api } from '@/lib/api';
 import { showBanner } from '@/lib/banner';
 import { errorMessage } from '@/lib/http';
-import { cadenceShort, daysLeft, goalNextSession, goalProgress, milestonesDone, nudgeTime } from '@/lib/model';
+import { cadenceShort, daysLeft, goalNextSession, goalProgress, milestonesDone, nudgeTime, startsLater } from '@/lib/model';
 import { useChange, useLoadedState, useNow } from '@/lib/queries';
 import { fonts, useTheme } from '@/lib/theme';
-import { dayLabel, localDate, localTime, MONTHS_SHORT, WEEKDAYS_SHORT, weekdayOf } from '@/lib/time';
+import { dayLabel, localDate, localTime, MONTHS_SHORT, shortDate, WEEKDAYS_SHORT, weekdayOf } from '@/lib/time';
 import type { Block, Milestone } from '@/lib/types';
 import { Button, Card, Icon, IconButton, onInk, ProgressRing, Screen, SectionTitle, T } from '@/ui';
 
@@ -94,6 +94,7 @@ export default function GoalDetail() {
   const pct = goalProgress(goal);
   const next = goalNextSession(state, goal, now);
   const [y, mo, d] = goal.deadline.split('-').map(Number);
+  const startDay = startsLater(goal, localDate(now, tz));
   const currentIdx = goal.milestones.findIndex((m) => !m.done_at);
 
   return (
@@ -103,7 +104,9 @@ export default function GoalDetail() {
         <Button label="Edit goal" variant="secondary" compact onPress={() => router.push(`/goal/edit/${goal.id}`)} style={{ borderRadius: 999 }} />
       </View>
       <View style={{ gap: 6 }}>
-        <T variant="eyebrow" tone="secondary">{`Goal · due ${d} ${MONTHS_SHORT[mo - 1]} ${y}${goal.status !== 'active' ? ` · ${goal.status}` : ''}`}</T>
+        <T variant="eyebrow" tone="secondary">
+          {`Goal · ${startDay ? `starts ${shortDate(startDay)} · ` : ''}due ${d} ${MONTHS_SHORT[mo - 1]} ${y}${goal.status !== 'active' ? ` · ${goal.status}` : ''}`}
+        </T>
         <T variant="h1">{goal.title}</T>
         {goal.why ? <T tone="secondary">{goal.why}</T> : null}
       </View>
@@ -141,7 +144,7 @@ export default function GoalDetail() {
             </T>
           ) : (
             <T variant="label" color={onInk.text}>
-              {goal.status === 'active' ? 'None in the next two weeks' : `Goal is ${goal.status}`}
+              {goal.status !== 'active' ? `Goal is ${goal.status}` : startDay ? `Starts ${dayLabel(startDay)}` : 'None in the next two weeks'}
             </T>
           )}
           {goal.rule ? (

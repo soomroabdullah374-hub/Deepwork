@@ -127,6 +127,15 @@ export function minutesToTime(minutes: number): string {
   return `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 }
 
+/**
+ * Minutes from `start` to `end` ("HH:MM"), going past midnight when the end is earlier.
+ * An end equal to the start is a full day.
+ */
+export function lengthUntil(start: string, end: string): number {
+  const d = timeToMinutes(end) - timeToMinutes(start);
+  return d > 0 ? d : d + 24 * 60;
+}
+
 export function minutesBetween(a: Date | string, b: Date | string): number {
   return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 60_000);
 }

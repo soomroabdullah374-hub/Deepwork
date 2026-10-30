@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { addDays, dayLabel, localDate, localTime, localToUtc, mondayOf, relativeIn, zoneLabel } from '../time';
+import { addDays, dayLabel, lengthUntil, localDate, localTime, localToUtc, mondayOf, relativeIn, zoneLabel } from '../time';
 
 describe('time zones', () => {
   it('converts local wall time to UTC and back', () => {
@@ -21,5 +21,16 @@ describe('time zones', () => {
     expect(relativeIn(now, new Date('2026-10-25T13:00:00Z'))).toBe('in 45 min');
     expect(relativeIn(now, new Date('2026-10-25T14:20:00Z'))).toBe('in 2 h 5 min');
     expect(zoneLabel('Asia/Karachi')).toContain('UTC+5');
+  });
+});
+
+describe('lengthUntil', () => {
+  it.each([
+    ['20:00', '21:30', 90],
+    ['23:00', '01:00', 120],
+    ['09:00', '09:00', 24 * 60],
+    ['00:00', '23:55', 23 * 60 + 55],
+  ])('%s to %s is %i minutes', (start, end, minutes) => {
+    expect(lengthUntil(start, end)).toBe(minutes);
   });
 });

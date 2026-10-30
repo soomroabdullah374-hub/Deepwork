@@ -5,7 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
 import Animated from 'react-native-reanimated';
-import { ChoiceTile, TimeTile } from '@/features/pickers';
+import { DateTile, DurationTile, durationLabel, TimeTile } from '@/features/pickers';
 import { api } from '@/lib/api';
 import { showBanner } from '@/lib/banner';
 import { errorMessage } from '@/lib/http';
@@ -13,12 +13,22 @@ import { daysPhrase, holdsTime } from '@/lib/model';
 import { useShake } from '@/lib/motion';
 import { useChange, useLoadedState } from '@/lib/queries';
 import { fonts, radius, useTheme } from '@/lib/theme';
-import { addDays, hhmm, localDate, localMinutes, minutesToTime, timeToMinutes, WEEKDAYS_LONG, weekdayOf } from '@/lib/time';
+import {
+  addDays,
+  dayLabel,
+  hhmm,
+  lengthUntil,
+  localDate,
+  localMinutes,
+  minutesToTime,
+  timeToMinutes,
+  WEEKDAYS_LONG,
+  weekdayOf,
+} from '@/lib/time';
 import type { CommitmentCheck } from '@/lib/types';
 import { Button, Card, Chip, DayPills, Field, Icon, Screen, Segmented, T, TopBar } from '@/ui';
 
-const LENGTHS = [15, 30, 45, 60, 90, 120, 180, 240, 300, 480];
-const lengthLabel = (m: number) => (m < 60 ? `${m} min` : m % 60 === 0 ? `${m / 60} hour${m === 60 ? '' : 's'}` : `${(m / 60).toFixed(1)} hours`);
+const LENGTHS = [15, 30, 45, 60, 90, 120, 180, 240, 480];
 
 export default function CommitmentScreen() {
   const { c } = useTheme();
@@ -35,6 +45,8 @@ export default function CommitmentScreen() {
   );
   const [start, setStart] = useState(existing ? hhmm(existing.start_time) : '18:00');
   const [length, setLength] = useState(existing?.duration_min ?? 60);
+  // a one-time commitment's date; the first default is the next time `start` comes round
+  const [onceDate, setOnceDate] = useState<string | null>(existing?.one_off_date ?? null);
   const [check, setCheck] = useState<CommitmentCheck | null>(null);
   const [checking, setChecking] = useState(false);
   const { style: shakeStyle, shake } = useShake();
@@ -52,22 +64,15 @@ export default function CommitmentScreen() {
   );
   const remove = useChange(() => api.deleteCommitment(existing!.id));
 
-  // the next date for a one-off on the chosen weekday (today if it is still ahead)
-  const oneOffDate = useMemo(() => {
-    const wd = days[0] ?? weekdayOf(today);
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(today, i);
-      if (weekdayOf(d) === wd) {
-        if (i === 0 && timeToMinutes(start) <= localMinutes(new Date(), tz)) continue;
-        return d;
-      }
-    }
-    return addDays(today, 7);
-  }, [days, start, today, tz]);
+  const oneOffDate = useMemo(
+    () => onceDate ?? (timeToMinutes(start) > localMinutes(new Date(), tz) ? today : addDays(today, 1)),
+    [onceDate, start, today, tz],
+  );
+  const hasDays = weekly === 'once' || days.length > 0;
 
   const key = `${weekly}|${days.join(',')}|${start}|${length}|${oneOffDate}`;
   useEffect(() => {
-    if (days.length === 0) {
+    if (!hasDays) {
       setCheck(null);
       return;
     }
@@ -114,7 +119,9 @@ export default function CommitmentScreen() {
   const x = (m: number) => `${((Math.min(Math.max(m, winFrom), winTo) - winFrom) / (winTo - winFrom)) * 100}%` as const;
   const others = state.blocks.filter((b) => holdsTime(b) && localDate(b.starts_at, tz) === previewDate && b.commitment_id !== existing?.id);
   const clash = (check?.clashes.length ?? 0) > 0;
-  const canSave = title.trim().length > 0 && days.length > 0 && !clash && !checking && Boolean(check);
+  const canSave = title.trim().length > 0 && hasDays && !clash && !checking && Boolean(check);
+  const nextDay = startMin + length >= 24 * 60;
+  const endText = `${minutesToTime(startMin + length)}${nextDay ? ' (next day)' : ''}`;
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -167,22 +174,23 @@ export default function CommitmentScreen() {
             <Segmented
               compact
               value={weekly}
-              onChange={(v) => {
-                setWeekly(v);
-                if (v === 'once') setDays(days.slice(0, 1));
-              }}
+              onChange={setWeekly}
               options={[
                 { value: 'weekly', label: 'Every week' },
                 { value: 'once', label: 'Once' },
               ]}
             />
           </View>
-          <DayPills value={days} onChange={setDays} tone="ink" single={weekly === 'once'} />
+          {weekly === 'weekly' ? (
+            <DayPills value={days} onChange={setDays} tone="ink" />
+          ) : (
+            <DateTile label="Date" value={oneOffDate} minimum={today} maximum={addDays(today, 365)} onChange={setOnceDate} />
+          )}
         </View>
         <View style={{ gap: 8 }}>
           <T variant="label">
-            Starts at
-            <T variant="label" tone="secondary" style={{ fontFamily: fonts.ui }}>{` · ${lengthLabel(length)}`}</T>
+            Time
+            <T variant="label" tone="secondary" style={{ fontFamily: fonts.ui }}>{` · ${start} to ${endText} · ${durationLabel(length)}`}</T>
           </T>
           <View style={{ flexDirection: 'row', gap: 6 }}>
             {chips.map((t) => (
@@ -190,8 +198,15 @@ export default function CommitmentScreen() {
             ))}
           </View>
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <TimeTile label="Any time" value={start} onChange={setStart} />
-            <ChoiceTile label="Lasts" title="How long?" value={length} options={LENGTHS} display={(m) => (m < 60 ? `${m}m` : m % 60 ? `${(m / 60).toFixed(1)}h` : `${m / 60}h`)} onChange={setLength} />
+            <TimeTile label="Starts" title="When does it start?" value={start} onChange={setStart} />
+            <TimeTile
+              label="Ends"
+              title="When does it end?"
+              value={minutesToTime(startMin + length)}
+              note={nextDay ? 'next day' : undefined}
+              onChange={(end) => setLength(Math.max(5, lengthUntil(start, end)))}
+            />
+            <DurationTile label="Lasts" title="How long?" value={length} presets={LENGTHS} min={5} max={24 * 60} onChange={setLength} />
           </View>
         </View>
 
@@ -246,7 +261,7 @@ export default function CommitmentScreen() {
           </View>
         </Card>
 
-        {days.length === 0 ? (
+        {!hasDays ? (
           <T tone="secondary">Pick at least one day.</T>
         ) : checking && !check ? (
           <T tone="secondary">Checking your week…</T>
@@ -272,7 +287,7 @@ export default function CommitmentScreen() {
               <T variant="bodySm" style={{ fontFamily: fonts.uiBold }}>
                 No clash.
               </T>
-              {` ${weekly === 'weekly' ? daysPhrase(days) : `${WEEKDAYS_LONG[weekdayOf(oneOffDate)]} ${Number(oneOffDate.slice(8))}`}, ${start}–${minutesToTime(startMin + length)}`}
+              {` ${weekly === 'weekly' ? daysPhrase(days) : dayLabel(oneOffDate)}, ${start}–${endText}`}
             </T>
           </View>
         ) : null}

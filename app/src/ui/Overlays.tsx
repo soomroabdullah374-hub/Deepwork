@@ -1,7 +1,7 @@
 // Bottom sheet (scrim + slide up) and the undo toast with a draining bar.
 
 import { type ReactNode, useEffect } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Pressable, View } from 'react-native';
 import Animated, {
   Easing,
   runOnJS,
@@ -27,7 +27,9 @@ export function Sheet({ visible, onClose, children }: { visible: boolean; onClos
   const scrim = useAnimatedStyle(() => ({ opacity: 1 - y.value }));
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* Sheets hold text fields: lift them above the keyboard on both platforms (it only
+          pads by the part of the sheet the keyboard actually covers). */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <Animated.View style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim }, scrim]}>
           <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityLabel="Close" />
         </Animated.View>

@@ -1,6 +1,7 @@
 // Typed calls to the DeepWork API. Every call carries a fresh JWT; a 401 refreshes the
 // token once and retries.
 
+import { File } from 'expo-file-system';
 import { getToken } from './auth';
 import { ApiError, call, type CallOptions } from './http';
 import type {
@@ -65,13 +66,20 @@ export const api = {
   updateProfile: (patch: Partial<Profile> & { onboarded?: boolean }) =>
     authed<Profile>('PATCH', '/profile', { body: patch }),
 
-  draftPlan: (input: { title: string; why?: string; deadline: string; rule?: Partial<RuleInput> }) =>
+  draftPlan: (input: { title: string; why?: string; start_date?: string | null; deadline: string; rule?: Partial<RuleInput> }) =>
     authed<DraftPlan>('POST', '/goals/draft-plan', { body: input, timeoutMs: 45_000 }),
 
-  createGoal: (input: { title: string; why?: string; deadline: string; milestones: { title: string }[]; rule: RuleInput }) =>
+  createGoal: (input: {
+    title: string;
+    why?: string;
+    start_date?: string | null;
+    deadline: string;
+    milestones: { title: string }[];
+    rule: RuleInput;
+  }) =>
     authed<{ goal_id: string; conflicts: GenConflict[] }>('POST', '/goals', { body: input }),
 
-  updateGoal: (id: string, patch: { title?: string; why?: string | null; deadline?: string; status?: string }) =>
+  updateGoal: (id: string, patch: { title?: string; why?: string | null; start_date?: string | null; deadline?: string; status?: string }) =>
     authed<{ goal_id: string; conflicts: GenConflict[] }>('PATCH', `/goals/${id}`, { body: patch }),
 
   deleteGoal: (id: string) => authed('DELETE', `/goals/${id}`),
@@ -87,7 +95,8 @@ export const api = {
   recentSessions: (goalId: string, limit = 10) =>
     authed<Block[]>('GET', `/goals/${goalId}/sessions`, { query: { limit } }),
 
-  checkSlots: (input: CommitmentInput & { id?: string; ignore_goal?: string }) =>
+  /** `until` stops the check after that day (a goal's deadline). */
+  checkSlots: (input: CommitmentInput & { id?: string; ignore_goal?: string; until?: string }) =>
     authed<CommitmentCheck>('POST', '/commitments/check', { body: input }),
 
   saveCommitment: (input: CommitmentInput, id?: string) =>
@@ -105,11 +114,10 @@ export const api = {
 
   deleteAccount: () => authed('DELETE', '/account'),
 
+  /** Sends the recording itself as the body (the server also takes multipart). */
   transcribe: async (fileUri: string, mime = 'audio/mp4') => {
-    const form = new FormData();
-    // React Native reads the file from its uri when the request is sent
-    form.append('audio', { uri: fileUri, name: 'clip.m4a', type: mime } as unknown as Blob);
-    return await authed<Transcript>('POST', '/assistant/transcribe', { form, timeoutMs: 90_000 });
+    const bytes = new Uint8Array(await new File(fileUri).arrayBuffer());
+    return await authed<Transcript>('POST', '/assistant/transcribe', { raw: { bytes, type: mime }, timeoutMs: 90_000 });
   },
 
   plan: (text: string, meta: { confidence?: number | null; language?: string | null } = {}) =>

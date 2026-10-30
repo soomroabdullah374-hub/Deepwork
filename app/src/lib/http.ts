@@ -24,7 +24,8 @@ export interface CallOptions {
   query?: Record<string, string | number | undefined | null>;
   token?: string | null;
   timeoutMs?: number;
-  form?: FormData;
+  /** A binary body (a recording). Expo's fetch can't send React Native's FormData files. */
+  raw?: { bytes: Uint8Array<ArrayBuffer>; type: string };
 }
 
 export function buildUrl(path: string, query?: CallOptions['query']): string {
@@ -38,9 +39,10 @@ export function buildUrl(path: string, query?: CallOptions['query']): string {
 export async function call<T>(method: string, path: string, opts: CallOptions = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json', 'x-timezone': deviceTimeZone() };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
-  let body: string | FormData | undefined;
-  if (opts.form) {
-    body = opts.form;
+  let body: string | Uint8Array<ArrayBuffer> | undefined;
+  if (opts.raw) {
+    headers['Content-Type'] = opts.raw.type;
+    body = opts.raw.bytes;
   } else if (opts.body !== undefined) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(opts.body);
