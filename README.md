@@ -75,8 +75,9 @@ cd app && npm ci && npx tsc --noEmit && npx jest
 ```
 
 The end-to-end check of the deployed API is `supabase/tests/e2e.sql` (run it in the Supabase
-SQL editor). The 40-utterance assistant eval runs on the server: `POST /assistant/eval` with the
-project's cron secret.
+SQL editor). The 40-utterance assistant eval is `supabase/tests/assistant_eval.sql`, run the
+same way once `LLM_API_KEY` is set; it calls `POST /assistant/eval` with the project's cron
+secret from Vault and answers with the pass count and the failures.
 
 Deploy the functions from a checkout with the Supabase CLI:
 
