@@ -2,7 +2,7 @@
 // token once and retries.
 
 import { getToken } from './auth';
-import { API_URL, ApiError, call, type CallOptions } from './http';
+import { ApiError, call, type CallOptions } from './http';
 import type {
   AppState,
   ApplyResult,
@@ -97,8 +97,9 @@ export const api = {
 
   deleteCommitment: (id: string) => authed('DELETE', `/commitments/${id}`),
 
+  /** `push`: the server sends this phone's reminders (so the phone schedules none). */
   registerDevice: (token: string, platform: 'android' | 'ios') =>
-    authed('POST', '/devices', { body: { token, platform } }),
+    authed<{ registered: boolean; push: boolean }>('POST', '/devices', { body: { token, platform } }),
 
   exportData: () => authed<Record<string, unknown>>('GET', '/export', { timeoutMs: 60_000 }),
 
@@ -122,9 +123,11 @@ export const api = {
 
   undo: (runId: string) => authed('POST', '/assistant/undo', { body: { run_id: runId } }),
 
-  /** URL and headers to stream the spoken reply straight into the audio player. */
-  speechSource: async (text: string, language: string) => ({
-    uri: `${API_URL}/assistant/speak?text=${encodeURIComponent(text)}&lang=${encodeURIComponent(language)}`,
-    headers: { Authorization: `Bearer ${await getToken()}` },
-  }),
+  /** The spoken reply as base64 MP3 (ElevenLabs on the server). */
+  speech: (text: string, language: string) =>
+    authed<{ audio: string; mime: string }>('POST', '/assistant/speak', {
+      body: { text, language },
+      query: { format: 'json' },
+      timeoutMs: 30_000,
+    }),
 };

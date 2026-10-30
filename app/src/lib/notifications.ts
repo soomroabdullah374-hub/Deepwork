@@ -1,8 +1,11 @@
-// Local notifications: reminders are scheduled on the phone from the synced schedule,
-// so they work without any push service. Actions: Start, Snooze 10m, Done.
+// Reminders. When this phone is registered for Firebase push and the server confirms it
+// sends reminders, the server does (they look and act the same); otherwise they are
+// scheduled on the phone from the synced schedule, which needs no push service at all.
+// Actions: Start, Snooze 10m, Done.
 
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { api } from './api';
 import { planReminders, type Reminder, remindersSignature } from './reminders';
 import type { AppState } from './types';
 
@@ -11,6 +14,7 @@ export const CATEGORY_ID = 'session';
 
 let ready = false;
 let lastSignature = '';
+let registering: Promise<boolean> | null = null;
 
 export async function setupNotifications() {
   if (ready) return;
@@ -67,9 +71,36 @@ async function schedule(r: Reminder) {
   });
 }
 
+/**
+ * Register this phone's push token once per app session. True when the server sends the
+ * reminders (Firebase set up on both sides); then the phone schedules none itself.
+ */
+export function registerPush(): Promise<boolean> {
+  registering ??= (async () => {
+    if (Platform.OS !== 'android' || !(await hasPermission())) return false;
+    try {
+      const { data: token } = await Notifications.getDevicePushTokenAsync();
+      if (typeof token !== 'string' || token.length < 20) return false;
+      return (await api.registerDevice(token, 'android')).push === true;
+    } catch {
+      return false;
+    }
+  })().then((active) => {
+    if (!active) registering = null; // try again next time (offline, permission later…)
+    return active;
+  });
+  return registering;
+}
+
 /** Replace the scheduled reminders with the ones the current state calls for. */
 export async function syncReminders(state: AppState, now = new Date()): Promise<number> {
   if (!(await hasPermission())) return 0;
+  if (state.profile.notifications_enabled && (await registerPush())) {
+    // The server sends them; drop any the phone scheduled before push was on.
+    if (lastSignature !== 'push') await Notifications.cancelAllScheduledNotificationsAsync();
+    lastSignature = 'push';
+    return 0;
+  }
   const plan = planReminders(state, now);
   const signature = remindersSignature(plan);
   if (signature === lastSignature) return plan.length;
@@ -81,6 +112,7 @@ export async function syncReminders(state: AppState, now = new Date()): Promise<
 
 export async function clearReminders() {
   lastSignature = '';
+  registering = null;
   await Notifications.cancelAllScheduledNotificationsAsync().catch(() => undefined);
   await Notifications.dismissAllNotificationsAsync().catch(() => undefined);
 }

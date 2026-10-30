@@ -44,26 +44,42 @@ Download the latest APK from the
 [Releases page](https://github.com/soomroabdullah374-hub/Deepwork/releases), open it on your
 Android phone and allow installs from that source when asked.
 
-## Turn on the voice assistant
+## Keys and secrets
 
-The assistant needs three API keys, set as **Edge Function secrets** in the Supabase
-dashboard (Project → Edge Functions → Secrets), never in the app:
+The keys live on the server only, never in the app. Each one can be an **Edge Function
+secret** (Dashboard → Edge Functions → Secrets) or a **Vault** secret (Dashboard → Project
+Settings → Vault, under the name in brackets); an Edge Function secret wins.
 
 | Secret | Used for |
 | --- | --- |
-| `LLM_API_KEY` | Groq (`gsk_…`) or xAI (`xai-…`) key; the provider is picked from the prefix |
-| `ASSEMBLYAI_API_KEY` | speech to text |
-| `ELEVENLABS_API_KEY` | spoken replies (optional) |
+| `LLM_API_KEY` (`llm_api_key`) | Groq (`gsk_…`) or xAI (`xai-…`) key; the provider is picked from the prefix |
+| `ASSEMBLYAI_API_KEY` (`assemblyai_api_key`) | speech to text (English and Urdu) |
+| `ELEVENLABS_API_KEY` (`elevenlabs_api_key`) | spoken replies |
+| `FCM_SERVICE_ACCOUNT_JSON` (`fcm_service_account`) | Firebase service account for push |
+| `NEON_DATABASE_URL_DISPATCHER` (`dispatcher_db_url`) | the dispatcher's database login (`deepwork_worker`, see `db/roles.sql.example`) |
 
 Optional: `LLM_MODEL` (default `openai/gpt-oss-120b` on Groq), `ELEVENLABS_VOICE_ID`,
-`ELEVENLABS_MODEL_ID`. `GET /functions/v1/api/health` shows which ones are configured.
+`ELEVENLABS_MODEL_ID`, `FCM_PROJECT_ID` (default: the service account's project).
+`GET /functions/v1/api/health` shows what is configured.
 
-## Server push (optional)
+**Spoken replies.** ElevenLabs refuses free-plan keys that are used from a server
+("detected_unusual_activity"), so with a free key the app speaks replies with the phone's
+own voice instead (Urdu where the phone has an Urdu voice). A paid ElevenLabs plan brings
+the ElevenLabs voice back without any change to the app.
 
-Reminders already work through local notifications. For server push through Firebase Cloud
-Messaging, add `FCM_PROJECT_ID`, `FCM_SERVICE_ACCOUNT_JSON` and
-`NEON_DATABASE_URL_DISPATCHER` (a connection string for the `dispatcher` role, see
-`db/roles.sql.example`) to the Edge Function secrets, and a `google-services.json` to the app.
+**Roman Urdu.** Typed Roman Urdu, Urdu script and English are all understood. Urdu speech
+that is first heard as low-confidence English is transcribed again as Urdu. When the app
+language is Roman Urdu, replies are written in Roman Urdu and spoken from Urdu script.
+
+## Reminders and push
+
+The dispatcher (pg_cron, every minute) marks missed sessions, keeps the 14-day horizon
+filled and sends due reminders through Firebase Cloud Messaging. When a phone registers its
+push token and the server has Firebase set up, the server sends that phone's reminders as
+data messages that the app shows exactly like its own (Start / Snooze / Done buttons, the
+same links), and the phone schedules none itself. Without push (no Google Play services,
+notifications off, offline at startup) the phone schedules its reminders locally, 7 days
+ahead, as before. `app/google-services.json` holds the Firebase app's public identifiers.
 
 ## Develop
 
@@ -80,8 +96,10 @@ cd app && npm ci && npx tsc --noEmit && npx jest
 
 The end-to-end check of the deployed API is `supabase/tests/e2e.sql` (run it in the Supabase
 SQL editor). The 40-utterance assistant eval is `supabase/tests/assistant_eval.sql`, run the
-same way once `LLM_API_KEY` is set; it calls `POST /assistant/eval` with the project's cron
-secret from Vault and answers with the pass count and the failures.
+same way; it calls `POST /assistant/eval` with the project's cron secret from Vault and
+answers with the pass count and the failures (39 of 40 with Groq `openai/gpt-oss-120b`).
+`POST /assistant/voice-check` (same secret) runs speech → text → plan → speech with the real
+providers, using the clips in `supabase/tests/audio` or ElevenLabs.
 
 Deploy the functions from a checkout with the Supabase CLI:
 

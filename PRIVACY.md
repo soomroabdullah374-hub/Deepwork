@@ -8,7 +8,7 @@ _Last updated 30 October 2026._
 
 **Where it lives.** Data is stored in a Neon Postgres database (Singapore region) with row-level security, so each account can only read its own rows. The API runs on Supabase Edge Functions. The phone's account is handled by Neon Auth.
 
-**Reminders.** Reminders are scheduled on your phone from your synced schedule. No advertising or tracking SDKs are included.
+**Reminders.** Reminders are sent by our server through Google Firebase Cloud Messaging, which needs your phone's push token (stored with your account and deleted with it), or, without push, scheduled on your phone from your synced schedule. When the assistant speaks without the ElevenLabs voice, your phone's own text-to-speech is used. No advertising or tracking SDKs are included.
 
 **Your choices.** Settings › Export everything gives you all your data as JSON. Settings › Delete all my data removes the phone's account and every row tied to it, immediately and permanently.
 

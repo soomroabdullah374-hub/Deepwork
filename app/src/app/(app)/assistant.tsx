@@ -2,7 +2,6 @@
 // Speech → AssemblyAI → plan (LLM) → every action checked → you apply → 10 s undo.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { createAudioPlayer } from 'expo-audio';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -11,6 +10,7 @@ import Animated, { FadeIn, useAnimatedProps, useAnimatedStyle } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { api } from '@/lib/api';
+import { speakReply, stopReply } from '@/lib/voiceReply';
 import { showBanner } from '@/lib/banner';
 import { ApiError, errorMessage } from '@/lib/http';
 import { useDraw, usePulse, useRise } from '@/lib/motion';
@@ -462,19 +462,12 @@ export default function Assistant() {
   const [listenKey, setListenKey] = useState(0);
   const [startTyping, setStartTyping] = useState(false);
   const [listenError, setListenError] = useState<string | null>(null);
-  const player = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
+  useEffect(() => stopReply, []);
 
-  useEffect(() => () => player.current?.remove(), []);
-
-  const speak = async (p: AssistantPlan) => {
-    if (!state.profile.speak_replies || !p.reply_tts || health.data?.text_to_speech.configured === false) return;
-    try {
-      player.current?.remove();
-      player.current = createAudioPlayer(await api.speechSource(p.reply_tts, p.reply_language));
-      player.current.play();
-    } catch {
-      // the reply is on screen anyway
-    }
+  // The ElevenLabs voice when the server has it, else the phone's own voice.
+  const speak = (p: AssistantPlan) => {
+    if (!state.profile.speak_replies || !(p.reply_tts || p.reply_text)) return;
+    speakReply({ text: p.reply_text, tts: p.reply_tts, language: p.reply_language }).catch(() => undefined);
   };
 
   const handlePlan = async (p: AssistantPlan) => {

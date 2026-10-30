@@ -3,7 +3,7 @@
     "name": "DeepWork",
     "slug": "deepwork",
     "scheme": "deepwork",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -17,7 +17,8 @@
     },
     "android": {
       "package": "com.deepwork.app",
-      "versionCode": 2,
+      "versionCode": 3,
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#B8532F",
         "foregroundImage": "./assets/android-icon-foreground.png",
