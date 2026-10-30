@@ -31,6 +31,21 @@ function requestBodies(audioUrl: string, keyterms: string[]): Record<string, unk
   ];
 }
 
+// Urdu said with an accent, quietly or with English words mixed in is sometimes detected as
+// English and written out phonetically ("Kalsam Sat Bhagi…"), with low word confidence.
+// Such results get a second pass as Urdu, and the more confident transcript wins.
+const URDU_RETRY_BELOW = 0.8;
+
+function urduBodies(audioUrl: string, keyterms: string[]): Record<string, unknown>[] {
+  const terms = keyterms.filter((t) => t.trim().length > 1 && t.split(/\s+/).length <= 6).slice(0, 100);
+  return [
+    { audio_url: audioUrl, speech_models: ['universal-3-pro', 'universal-2'], language_code: 'ur', ...(terms.length ? { keyterms_prompt: terms } : {}) },
+    { audio_url: audioUrl, speech_models: ['universal-3-pro', 'universal-2'], language_code: 'ur' },
+    { audio_url: audioUrl, speech_model: 'universal', language_code: 'ur' },
+    { audio_url: audioUrl, language_code: 'ur' },
+  ];
+}
+
 export async function transcribe(audio: Uint8Array<ArrayBuffer>, keyterms: string[]): Promise<Transcript> {
   const key = config.assemblyAiKey;
   if (!key) {
@@ -47,9 +62,21 @@ export async function transcribe(audio: Uint8Array<ArrayBuffer>, keyterms: strin
   if (!up.ok) throw new HttpError(502, 'stt_failed', 'Could not upload the recording.');
   const { upload_url } = await up.json();
 
+  const first = await run(auth, requestBodies(upload_url, keyterms));
+  if (first.language !== 'en' || (first.confidence ?? 1) >= URDU_RETRY_BELOW || !first.text) return first;
+  try {
+    const urdu = await run(auth, urduBodies(upload_url, keyterms));
+    return urdu.text && (urdu.confidence ?? 0) > (first.confidence ?? 0) ? urdu : first;
+  } catch {
+    return first;
+  }
+}
+
+/** Submit with the first request body AssemblyAI accepts, then wait for the transcript. */
+async function run(auth: { authorization: string }, bodies: Record<string, unknown>[]): Promise<Transcript> {
   let job: { id: string } | null = null;
   let lastError = '';
-  for (const body of requestBodies(upload_url, keyterms)) {
+  for (const body of bodies) {
     const res = await fetchWithTimeout(`${API}/transcript`, {
       method: 'POST',
       headers: { ...auth, 'Content-Type': 'application/json' },
