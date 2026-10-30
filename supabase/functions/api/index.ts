@@ -37,6 +37,7 @@
 //   POST   /assistant/undo              undo within the window
 //   GET|POST /assistant/speak           reply → speech (ElevenLabs)
 //   POST   /assistant/eval              the 40-case eval (x-cron-secret only)
+//   POST   /assistant/voice-check       speak → transcribe → plan → speak (x-cron-secret only)
 
 import { config, loadSecrets, VERSION } from '../_shared/env.ts';
 import { corsHeaders, errorResponse, HttpError, json, readJson } from '../_shared/http.ts';
@@ -68,7 +69,7 @@ import {
 import { isAutoApplicable, MUTATING_TYPES, type ResolvedAction, resolvePlan } from '../_shared/assistant/resolve.ts';
 import { type Plan, PlanSchema } from '../_shared/assistant/schema.ts';
 import { draftPlan } from '../_shared/assistant/draft.ts';
-import { runEval } from '../_shared/assistant/eval.ts';
+import { runEval, runVoiceCheck } from '../_shared/assistant/eval.ts';
 import { hasCronSecret } from '../_shared/cron.ts';
 
 type Params = Record<string, string>;
@@ -860,6 +861,12 @@ route('POST', '/assistant/eval', async (ctx) => {
   const cases = Array.isArray(body.cases) ? body.cases.map(Number).filter((n) => n >= 1 && n <= 40) : undefined;
   const out = await runEval(cases);
   return json({ ...out, provider: config.llm.label, model: config.llm.model });
+});
+
+// The voice path end to end with the real providers (spends credits, so cron secret only).
+route('POST', '/assistant/voice-check', async (ctx) => {
+  if (!(await hasCronSecret(ctx.req))) throw new HttpError(401, 'unauthorized', 'Not allowed.');
+  return json({ results: await runVoiceCheck(), provider: config.llm.label, model: config.llm.model });
 });
 
 // ───────────────────────── server

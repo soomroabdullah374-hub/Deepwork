@@ -8,6 +8,8 @@ import { planWithLlm } from './planner.ts';
 import type { PromptContext } from './prompt.ts';
 import type { Plan, PlanAction } from './schema.ts';
 import { calendarLine } from './planner.ts';
+import { transcribe } from './stt.ts';
+import { speak } from './tts.ts';
 
 type Rule = { weekdays: number[]; start_time: string; duration_min: number; lead_min: number };
 
@@ -217,4 +219,36 @@ export async function runEval(numbers?: number[]): Promise<{ results: EvalResult
     }
   }
   return { results, passed: results.filter((r) => r.pass).length, total: results.length };
+}
+
+// The voice path end to end with the real providers, in the same fixed context: each phrase
+// is spoken by ElevenLabs, transcribed by AssemblyAI and planned, and the reply is voiced.
+// Urdu speech is written in Urdu script here: that is what a speaker of "Roman Urdu" says.
+export const VOICE_PHRASES: { text: string; language: string; means: string }[] = [
+  { text: 'کل شام سات بجے جم شامل کر دو', language: 'ur', means: 'kal shaam 7 baje gym add kar do' },
+  { text: 'پیر والا پورٹفولیو سیشن جمعرات کو آٹھ بجے کر دو', language: 'ur', means: "Monday's portfolio session to Thursday 8" },
+  { text: "Move Monday's portfolio session to Thursday at eight", language: 'en', means: 'English' },
+];
+
+export async function runVoiceCheck(phrases = VOICE_PHRASES) {
+  const keyterms = [...EVAL_GOALS.map((g) => g.title), ...EVAL_CONTEXT.commitments.map((c) => (c as { title: string }).title)];
+  const results: Record<string, unknown>[] = [];
+  for (const p of phrases) {
+    const t0 = Date.now();
+    try {
+      const voice = await speak(p.text, p.language);
+      const heard = await transcribe(voice.bytes, keyterms);
+      const { plan } = await planWithLlm(heard.text, EVAL_CONTEXT);
+      const reply = plan.reply_tts ? await speak(plan.reply_tts, plan.reply_language) : null;
+      results.push({
+        means: p.means, heard: heard.text, language: heard.language, confidence: heard.confidence,
+        actions: plan.actions.map(compact), reply_language: plan.reply_language, reply_text: plan.reply_text,
+        reply_tts: plan.reply_tts, audio_kb: Math.round(voice.bytes.length / 1024),
+        reply_audio_kb: reply ? Math.round(reply.bytes.length / 1024) : 0, ms: Date.now() - t0,
+      });
+    } catch (err) {
+      results.push({ means: p.means, error: err instanceof Error ? err.message : String(err), ms: Date.now() - t0 });
+    }
+  }
+  return results;
 }
