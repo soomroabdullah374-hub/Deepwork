@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import { addDays, dayLabel, localDate, localTime, localToUtc, mondayOf, relativeIn, zoneLabel } from '../time';
 
 describe('time zones', () => {

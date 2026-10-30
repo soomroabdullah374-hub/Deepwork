@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import {
   cadenceLetters, dayRibbon, goalProgress, greeting, missedSessions, nextSession, nudgeTime,
   overlapCount, sessionsBetween, todaySummary, weekStats,
