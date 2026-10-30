@@ -74,7 +74,7 @@ export class Db {
     };
   }
 
-  private async send<T>(path: string, init: RequestInit): Promise<T> {
+  private async send<T>(path: string, init: RequestInit, attempt = 1): Promise<T> {
     const res = await fetchWithTimeout(`${config.neonDataApiUrl}${path}`, init, 25_000);
     const text = await res.text();
     let body: unknown = null;
@@ -85,7 +85,18 @@ export class Db {
         body = null;
       }
     }
-    if (!res.ok) throw toHttpError(res.status, body as PgError | null);
+    if (!res.ok) {
+      const err = body as PgError | null;
+      // A Neon compute waking from scale-to-zero can turn away the first request. The
+      // token was already verified here and a 401/503 means nothing ran, so one quick
+      // retry is safe.
+      if (attempt === 1 && (res.status === 401 || res.status === 503)) {
+        console.warn('data api retry', res.status, err?.code ?? '', err?.message ?? '');
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return this.send<T>(path, init, 2);
+      }
+      throw toHttpError(res.status, err);
+    }
     return body as T;
   }
 
