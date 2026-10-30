@@ -38,7 +38,7 @@
 //   GET|POST /assistant/speak           reply → speech (ElevenLabs)
 //   POST   /assistant/eval              the 40-case eval (x-cron-secret only)
 
-import { config, VERSION } from '../_shared/env.ts';
+import { config, loadSecrets, VERSION } from '../_shared/env.ts';
 import { corsHeaders, errorResponse, HttpError, json, readJson } from '../_shared/http.ts';
 import { type AuthUser, requireUser } from '../_shared/auth.ts';
 import { Db } from '../_shared/neon.ts';
@@ -152,7 +152,7 @@ route('GET', '/health', () => {
     llm: { configured: Boolean(llm.apiKey), provider: llm.label, model: llm.model },
     speech_to_text: { configured: Boolean(config.assemblyAiKey), provider: 'AssemblyAI' },
     text_to_speech: { configured: Boolean(config.elevenLabs.apiKey), provider: 'ElevenLabs' },
-    push: { configured: Boolean(config.fcm.projectId && config.fcm.serviceAccountJson && config.dispatcherDbUrl) },
+    push: { configured: config.pushConfigured },
   });
 });
 
@@ -630,7 +630,9 @@ route('POST', '/devices', async (ctx) => {
   const token = typeof body.token === 'string' ? body.token.trim() : '';
   if (token.length < 20 || token.length > 4096) throw new HttpError(400, 'invalid', 'That device token is not valid.');
   const platform = body.platform === 'ios' ? 'ios' : 'android';
-  return json(await db.rpc('register_device', { p_token: token, p_platform: platform }));
+  const result = await db.rpc<Record<string, unknown>>('register_device', { p_token: token, p_platform: platform });
+  // `push` tells the phone whether the server sends its reminders (then it schedules none itself).
+  return json({ ...result, push: config.pushConfigured });
 });
 
 route('DELETE', '/devices', async (ctx) => {
@@ -872,6 +874,7 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const path = stripPrefix(url.pathname);
   try {
+    await loadSecrets();
     let pathMatched = false;
     for (const r of routes) {
       const m = r.pattern.exec(path);

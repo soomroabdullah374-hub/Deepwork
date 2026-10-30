@@ -202,14 +202,22 @@ end $$;
 
 -- ───────────────────────── 10. free slots never overlap anything
 do $$
-declare r record; n int := 0; k int;
+declare r record; n int := 0; k int; w tstzrange;
 begin
-  -- real "now" is used by free_slots; book a block inside the next day to steer around
+  -- real "now" is used by free_slots; book a 4-hour block in the next two days to steer
+  -- around, in the first window the fixtures above leave free (they sit on fixed dates)
+  for h in 24..48 loop
+    w := tstzrange(date_trunc('hour', now()) + make_interval(hours => h),
+                   date_trunc('hour', now()) + make_interval(hours => h + 4), '[)');
+    exit when not exists (select 1 from calendar_blocks b
+                           where b.user_id = current_uid() and b.status not in ('cancelled', 'skipped')
+                             and b.period && w);
+  end loop;
   insert into commitments (id, title, weekdays, start_time, duration_min, one_off_date)
-    values ('c0000000-0000-0000-0000-0000000000c2', 'Blocker', '{}', '00:00', 15, current_date + 3);
+    values ('c0000000-0000-0000-0000-0000000000c2', 'Blocker', '{}', '00:00', 15,
+            (lower(w) at time zone 'Asia/Karachi')::date);
   insert into calendar_blocks (kind, commitment_id, title, period)
-    values ('commitment', 'c0000000-0000-0000-0000-0000000000c2', 'Blocker',
-            tstzrange(date_trunc('hour', now()) + interval '26 hours', date_trunc('hour', now()) + interval '30 hours', '[)'));
+    values ('commitment', 'c0000000-0000-0000-0000-0000000000c2', 'Blocker', w);
   for r in select * from free_slots(90, now(), now() + interval '7 days', 40) loop
     n := n + 1;
     select count(*) into k from calendar_blocks b

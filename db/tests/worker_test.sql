@@ -35,10 +35,11 @@ begin
 end $$;
 
 do $$
-declare n int; k int; ids bigint[];
+declare n int; g int; k int; ids bigint[];
 begin
-  select count(*), array_agg(job_id) into n, ids from worker_claim_pushes() where kind in ('lead', 'start');
+  select count(*), count(goal_id), array_agg(job_id) into n, g, ids from worker_claim_pushes() where kind in ('lead', 'start');
   assert n >= 1, 'FAIL W4: no due lead/start push was claimed';
+  assert g = n, 'FAIL W4: a session push came without its goal id';
   select count(*) into k from worker_claim_pushes() where kind in ('lead', 'start');
   assert k = 0, 'FAIL W4: the same push was claimed twice';
   perform worker_finish_pushes(ids, '{}', array['token-worker-test-bad-0000']);

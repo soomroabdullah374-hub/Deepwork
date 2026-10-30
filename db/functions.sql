@@ -608,7 +608,7 @@ end $$;
 -- Cron (every minute, only when FCM is configured): claim due pushes for users with a
 -- registered device. Quiet hours skip everything except the start push; max 6 a day.
 create or replace function worker_claim_pushes() returns table (
-  job_id bigint, user_id text, kind text, block_id uuid, title text, starts_at timestamptz,
+  job_id bigint, user_id text, kind text, block_id uuid, goal_id uuid, title text, starts_at timestamptz,
   ends_at timestamptz, lead_min int, language text, hide_titles boolean, tz text,
   goal_title text, days_left int, milestones_done int, milestones_total int,
   sessions_today int, tokens text[]
@@ -677,7 +677,7 @@ begin
      where j.sent_at is null and j.attempts < 3 and j.claimed_at < now() - interval '2 minutes'
     returning j.id, j.user_id, j.kind, j.block_id, j.ref
   )
-  select cl.id, cl.user_id, cl.kind, cl.block_id, b.title, lower(b.period), upper(b.period),
+  select cl.id, cl.user_id, cl.kind, cl.block_id, coalesce(g.id, gd.id), b.title, lower(b.period), upper(b.period),
          r.lead_min, u.language, u.hide_titles, u.tz,
          coalesce(g.title, gd.title),
          case when gd.id is not null then (gd.deadline - (now() at time zone u.tz)::date) end,

@@ -1,14 +1,53 @@
 // Runtime configuration for the Edge Functions.
 //
-// Only three values are secret, and they come solely from the project's Edge Function
-// secrets: LLM_API_KEY, ASSEMBLYAI_API_KEY, ELEVENLABS_API_KEY (plus the optional FCM and
-// dispatcher settings). Everything else is public and has a default, so the functions
-// work as soon as they are deployed.
+// The secret values are LLM_API_KEY, ASSEMBLYAI_API_KEY, ELEVENLABS_API_KEY,
+// FCM_SERVICE_ACCOUNT_JSON and NEON_DATABASE_URL_DISPATCHER. Each comes from the project's
+// Edge Function secrets or, when it isn't set there, from the project's Vault (read with
+// the service-role key through public.dw_secrets()). Everything else is public and has a
+// default, so the functions work as soon as they are deployed.
+
+// Env name → Vault secret name.
+const VAULT_NAMES: Record<string, string> = {
+  LLM_API_KEY: 'llm_api_key',
+  ASSEMBLYAI_API_KEY: 'assemblyai_api_key',
+  ELEVENLABS_API_KEY: 'elevenlabs_api_key',
+  FCM_SERVICE_ACCOUNT_JSON: 'fcm_service_account',
+  NEON_DATABASE_URL_DISPATCHER: 'dispatcher_db_url',
+};
+let vault: Record<string, string> = {};
+let vaultNextCheck = 0;
 
 const env = (key: string): string | undefined => {
-  const value = Deno.env.get(key)?.trim();
+  const value = Deno.env.get(key)?.trim() || (VAULT_NAMES[key] ? vault[VAULT_NAMES[key]]?.trim() : undefined);
   return value ? value : undefined;
 };
+
+/** Refresh the Vault copy of the secrets: every 5 minutes, or 30 s after a failed read. */
+export async function loadSecrets(): Promise<void> {
+  if (Date.now() < vaultNextCheck) return;
+  const url = config.supabaseUrl;
+  const key = config.supabaseServiceKey;
+  vaultNextCheck = Date.now() + 30_000;
+  if (!url || !key) return;
+  try {
+    const res = await fetch(`${url}/rest/v1/rpc/dw_secrets`, {
+      method: 'POST',
+      headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) {
+      console.error('could not read secrets from Vault', res.status);
+      await res.body?.cancel();
+      return;
+    }
+    const data = await res.json();
+    if (data && typeof data === 'object') vault = data as Record<string, string>;
+    vaultNextCheck = Date.now() + 5 * 60_000;
+  } catch (err) {
+    console.error('could not read secrets from Vault', (err as Error).name);
+  }
+}
 
 export type LlmProvider = 'groq' | 'xai';
 
@@ -61,11 +100,26 @@ export const config = {
   },
 
   get fcm() {
-    return { projectId: env('FCM_PROJECT_ID'), serviceAccountJson: env('FCM_SERVICE_ACCOUNT_JSON') };
+    const serviceAccountJson = env('FCM_SERVICE_ACCOUNT_JSON');
+    let projectId = env('FCM_PROJECT_ID');
+    if (!projectId && serviceAccountJson) {
+      try {
+        projectId = (JSON.parse(serviceAccountJson) as { project_id?: string }).project_id;
+      } catch {
+        projectId = undefined;
+      }
+    }
+    return { projectId, serviceAccountJson };
   },
 
   get dispatcherDbUrl() {
     return env('NEON_DATABASE_URL_DISPATCHER');
+  },
+
+  /** Server push needs the Firebase service account and the dispatcher's database login. */
+  get pushConfigured(): boolean {
+    const fcm = this.fcm;
+    return Boolean(fcm.projectId && fcm.serviceAccountJson && this.dispatcherDbUrl);
   },
 
   supabaseUrl: env('SUPABASE_URL'),
@@ -84,4 +138,4 @@ export const config = {
   },
 };
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
