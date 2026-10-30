@@ -1,0 +1,81 @@
+{
+  "expo": {
+    "name": "DeepWork",
+    "slug": "deepwork",
+    "scheme": "deepwork",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#F5F4ED",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.deepwork.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "DeepWork listens only while you talk to the assistant, to turn what you say into schedule changes."
+      }
+    },
+    "android": {
+      "package": "com.deepwork.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#B8532F",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.USE_EXACT_ALARM",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#B8532F",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 132
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#B8532F",
+          "defaultChannel": "sessions"
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "DeepWork listens only while you talk to the assistant, to turn what you say into schedule changes."
+        }
+      ],
+      "expo-secure-store",
+      "expo-web-browser",
+      "expo-localization",
+      "expo-sharing",
+      "expo-font",
+      "@react-native-community/datetimepicker"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "apiUrl": "https://kqlrbkgiedrkhzthbqxk.supabase.co/functions/v1/api",
+      "privacyUrl": "https://github.com/soomroabdullah374-hub/Deepwork/blob/main/PRIVACY.md"
+    }
+  }
+}

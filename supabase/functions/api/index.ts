@@ -565,6 +565,7 @@ route('POST', '/commitments/check', async (ctx) => {
   const body = await readJson<Record<string, unknown>>(ctx.req);
   const c = validCommitment(body, false);
   const id = typeof body.id === 'string' && UUID.test(body.id) ? body.id : null;
+  const ignoreGoal = typeof body.ignore_goal === 'string' && UUID.test(body.ignore_goal) ? body.ignore_goal : null;
   const profile = await db.rpc<{ timezone: string }>('ensure_profile', {
     p_display_name: me.name ?? '',
     p_timezone: headerTimezone(ctx.req),
@@ -585,6 +586,7 @@ route('POST', '/commitments/check', async (ctx) => {
     ? await db.rpc<{ index: number; clash: Record<string, string> | null }[]>('check_slots', {
       p_slots: slots,
       p_ignore_commitment: id,
+      p_ignore_goal: ignoreGoal,
     })
     : [];
   const clashes = rows
@@ -755,8 +757,9 @@ route('POST', '/assistant/plan', async (ctx) => {
   return json(planResponse(run, plan, actions, auto));
 });
 
-// Answer one question card ("Cloud lab on Friday. What time?" → "18:00"). Only that card
-// is planned again; the rest of the plan stays, and everything is re-checked.
+// Answer one question card ("Cloud lab on Friday. What time?" → "18:00"), or give a new
+// time for a card that clashed. Only that card is planned again; the rest of the plan
+// stays, and everything is re-checked.
 route('POST', '/assistant/answer', async (ctx) => {
   const { me, db } = await user(ctx);
   const body = await readJson<{ run_id?: unknown; index?: unknown; answer?: unknown }>(ctx.req);
@@ -774,12 +777,16 @@ route('POST', '/assistant/answer', async (ctx) => {
   if (run.applied_at) throw new HttpError(409, 'conflict', 'These changes were already applied.');
   const original = PlanSchema.parse({ ...run.plan, actions: run.plan.actions });
   const card = run.checks[index];
-  if (!card || card.status !== 'needs_answer') throw new HttpError(400, 'invalid', 'That question was already answered.');
+  if (!card || (card.status !== 'needs_answer' && card.status !== 'clash')) {
+    throw new HttpError(400, 'invalid', 'That question was already answered.');
+  }
 
   const tz = state.profile.timezone;
   const now = new Date();
   const { plan: answerPlan } = await planWithLlm(
-    `About "${card.question ?? card.summary}": ${answer}\n` +
+    (card.status === 'clash'
+      ? `"${card.summary}" clashes with ${card.clash?.title ?? 'something'}. Instead: ${answer}\n`
+      : `About "${card.question ?? card.summary}": ${answer}\n`) +
       'Return the plan with ONLY the action(s) that this answer settles. Do not repeat the other changes.',
     promptContext({ tz, now, goals: state.goals, commitments: state.commitments, blocks: state.blocks }),
     [
