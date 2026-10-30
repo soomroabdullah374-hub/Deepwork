@@ -4,6 +4,11 @@
 //
 //   GET    /health                      versions and which providers are configured
 //   GET    /auth/callback               bounce an OAuth redirect back into the app
+//   POST   /auth/sign-up | sign-in      email + password → { session, jwt, user }
+//   POST   /auth/code  /auth/code/verify  sign in with an emailed code
+//   POST   /auth/social /auth/social/finish  Google sign-in (browser round trip)
+//   POST   /auth/token                  session → fresh 15-minute JWT
+//   POST   /auth/sign-out
 //   GET    /state?from&to               profile, goals, commitments, blocks, streak
 //   GET    /blocks?from&to&goal         blocks in a window
 //   POST   /blocks/:id/:action          start | finish | skip | cancel | snooze | move | restore
@@ -37,6 +42,7 @@ import { config, VERSION } from '../_shared/env.ts';
 import { corsHeaders, errorResponse, HttpError, json, readJson } from '../_shared/http.ts';
 import { type AuthUser, requireUser } from '../_shared/auth.ts';
 import { Db } from '../_shared/neon.ts';
+import * as neonAuth from '../_shared/neon-auth.ts';
 import type { AppState } from '../_shared/state.ts';
 import { occupies } from '../_shared/state.ts';
 import {
@@ -160,6 +166,81 @@ route('GET', '/auth/callback', ({ url }) => {
       `<p>Returning to DeepWork…</p><p><a href="${target.replace(/"/g, '&quot;')}">Open the app</a></p></body>`,
     { status: 302, headers: { Location: target, 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders } },
   );
+});
+
+// ───────────────────────── sign-in (relayed to Neon Auth; nothing is stored here)
+function validEmail(value: unknown): string {
+  const email = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    throw new HttpError(400, 'invalid_email', 'That email address does not look right.');
+  }
+  return email;
+}
+
+function validPassword(value: unknown): string {
+  const password = typeof value === 'string' ? value : '';
+  if (password.length < 8) throw new HttpError(400, 'weak_password', 'Use at least 8 characters.');
+  if (password.length > 128) throw new HttpError(400, 'weak_password', 'That password is too long.');
+  return password;
+}
+
+function validSession(value: unknown): string {
+  const session = typeof value === 'string' ? value.trim() : '';
+  if (!/^[^=;\s]+\.session_token=[^;\s]+$/.test(session)) throw new HttpError(401, 'signed_out', 'Please sign in again.');
+  return session;
+}
+
+route('POST', '/auth/sign-up', async ({ req }) => {
+  const body = await readJson<{ email?: unknown; password?: unknown; name?: unknown }>(req);
+  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 80) : '';
+  return json(await neonAuth.signUp(validEmail(body.email), validPassword(body.password), name), 201);
+});
+
+route('POST', '/auth/sign-in', async ({ req }) => {
+  const body = await readJson<{ email?: unknown; password?: unknown }>(req);
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (!password) throw new HttpError(400, 'invalid_credentials', 'Enter your password.');
+  return json(await neonAuth.signIn(validEmail(body.email), password));
+});
+
+route('POST', '/auth/code', async ({ req }) => {
+  const body = await readJson<{ email?: unknown }>(req);
+  await neonAuth.sendCode(validEmail(body.email));
+  return json({ sent: true });
+});
+
+route('POST', '/auth/code/verify', async ({ req }) => {
+  const body = await readJson<{ email?: unknown; code?: unknown }>(req);
+  const code = typeof body.code === 'string' ? body.code.replace(/\s/g, '') : '';
+  if (!/^\d{4,8}$/.test(code)) throw new HttpError(400, 'invalid_code', 'Enter the code from the email.');
+  return json(await neonAuth.signInWithCode(validEmail(body.email), code));
+});
+
+route('POST', '/auth/social', async ({ req, url }) => {
+  const body = await readJson<{ provider?: unknown }>(req);
+  const provider = body.provider === 'google' ? 'google' : null;
+  if (!provider) throw new HttpError(400, 'invalid', 'Unknown sign-in provider.');
+  const callback = `${config.supabaseUrl ?? url.origin}/functions/v1/api/auth/callback`;
+  return json(await neonAuth.socialStart(provider, callback));
+});
+
+route('POST', '/auth/social/finish', async ({ req }) => {
+  const body = await readJson<{ verifier?: unknown; challenge?: unknown }>(req);
+  const verifier = typeof body.verifier === 'string' ? body.verifier.trim() : '';
+  const challenge = typeof body.challenge === 'string' ? body.challenge.trim() : '';
+  if (!verifier || verifier.length > 512) throw new HttpError(400, 'invalid', 'The sign-in link is not valid.');
+  return json(await neonAuth.socialFinish(verifier, challenge));
+});
+
+route('POST', '/auth/token', async ({ req }) => {
+  const body = await readJson<{ session?: unknown }>(req);
+  return json(await neonAuth.sessionToken(validSession(body.session)));
+});
+
+route('POST', '/auth/sign-out', async ({ req }) => {
+  const body = await readJson<{ session?: unknown }>(req);
+  if (typeof body.session === 'string' && body.session) await neonAuth.signOut(validSession(body.session));
+  return json({ signed_out: true });
 });
 
 // ───────────────────────── state and blocks
