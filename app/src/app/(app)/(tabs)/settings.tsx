@@ -212,7 +212,8 @@ export default function Settings() {
             right={<Switch label="Hide titles in reminders" value={p.hide_titles} onChange={(v) => save({ hide_titles: v })} />}
           />
           <Row
-            label="Reminder language"
+            label="Language"
+            caption="Reminders and assistant replies"
             right={
               <Segmented
                 compact
