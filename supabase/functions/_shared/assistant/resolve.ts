@@ -285,7 +285,7 @@ class Resolver {
         if (!a.start_local) return ask(`When should the ${shorten(goal.title, 40)} session be?`);
         const date = a.start_local.slice(0, 10);
         if (daysBetween(this.today, date) > MAX_DAYS_AHEAD) return reject('That is more than 120 days away.');
-        const minutes = a.duration_min ?? goal.rule?.duration_min ?? 60;
+        const minutes = Math.min(480, Math.max(10, a.duration_min ?? goal.rule?.duration_min ?? 60));
         const slot = this.slotAt(date, a.start_local.slice(11, 16), minutes);
         if (slot.end <= this.now) {
           return ask('That time has already passed. When should the session be?', [
@@ -447,6 +447,7 @@ class Resolver {
           for (let i = 0; i < HORIZON_DAYS; i++) {
             const d = addDays(this.today, i);
             if (d > goal.deadline) break;
+            if (goal.start_date && d < goal.start_date) continue;
             if (!rule.weekdays.includes(weekdayOf(d)) || keptDays.has(d)) continue;
             const s = this.slotAt(d, rule.start_time, rule.duration_min);
             if (s.start > this.now) draft.slots.push(s);

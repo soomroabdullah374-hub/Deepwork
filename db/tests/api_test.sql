@@ -148,5 +148,74 @@ begin
     raise notice 'PASS A11: apply frees time before adding, and undo restores both';
   end;
 
+  -- A12: a goal with a start date books nothing before it; moving the start re-books
+  declare
+    v_goal  uuid;
+    v_tz    text := my_tz();
+    v_today date := (now() at time zone my_tz())::date;
+    v_first date;
+  begin
+    r := create_goal(jsonb_build_object(
+           'title', 'Learn calligraphy', 'start_date', (v_today + 10)::text, 'deadline', (v_today + 40)::text,
+           'rule', '{"weekdays":[0,1,2,3,4,5,6],"start_time":"07:00","duration_min":30}'::jsonb));
+    v_goal := (r ->> 'goal_id')::uuid;
+    select min((lower(period) at time zone v_tz)::date) into v_first from calendar_blocks where goal_id = v_goal;
+    assert v_first = v_today + 10, format('FAIL A12: first session on %s, expected %s', v_first, v_today + 10);
+
+    r := update_goal(v_goal, jsonb_build_object('start_date', (v_today + 2)::text));
+    select min((lower(period) at time zone v_tz)::date) into v_first from calendar_blocks where goal_id = v_goal;
+    assert v_first = v_today + 2, format('FAIL A12: an earlier start booked from %s', v_first);
+
+    r := update_goal(v_goal, jsonb_build_object('start_date', (v_today + 12)::text));
+    select count(*) into n from calendar_blocks
+     where goal_id = v_goal and status = 'planned' and (lower(period) at time zone v_tz)::date < v_today + 12;
+    assert n = 0, format('FAIL A12: %s sessions left before a later start', n);
+
+    begin
+      perform update_goal(v_goal, jsonb_build_object('start_date', (v_today + 41)::text));
+      raise exception 'FAIL A12: a start after the deadline was saved';
+    exception when invalid_parameter_value then
+      get stacked diagnostics e = message_text;
+      assert e = 'The start date must be on or before the deadline.', format('FAIL A12: message %s', e);
+    end;
+
+    r := update_goal(v_goal, jsonb_build_object('start_date', null));
+    select min((lower(period) at time zone v_tz)::date) into v_first from calendar_blocks where goal_id = v_goal;
+    assert v_first <= v_today + 1, format('FAIL A12: no start date should book from today, got %s', v_first);
+    raise notice 'PASS A12: start dates book from that day, move with edits, and must not pass the deadline';
+  end;
+
+  -- A13: commitments last 5 minutes to 24 hours, sessions 10 minutes to 8 hours, and a
+  -- one-off a month out is booked (and clash-checked) right away
+  r := save_commitment(jsonb_build_object('title', 'Wedding', 'weekdays', '[]'::jsonb,
+         'one_off_date', ((now() at time zone my_tz())::date + 30)::text, 'start_time', '00:00', 'duration_min', 1440));
+  select count(*) into n from calendar_blocks
+   where commitment_id = (r ->> 'commitment_id')::uuid and upper(period) - lower(period) = interval '24 hours';
+  assert n = 1, 'FAIL A13: the 24-hour one-off a month out was not booked';
+  r := save_commitment('{"title":"Pill","weekdays":[1],"start_time":"06:00","duration_min":5}');
+  begin
+    perform save_commitment('{"title":"Too short","weekdays":[2],"start_time":"06:00","duration_min":4}');
+    raise exception 'FAIL A13: a 4-minute commitment was saved';
+  exception when check_violation then null;
+  end;
+  begin
+    perform save_commitment('{"title":"Too long","weekdays":[2],"start_time":"06:00","duration_min":1441}');
+    raise exception 'FAIL A13: a 1441-minute commitment was saved';
+  exception when check_violation then null;
+  end;
+  r := update_rule(g, '{"duration_min":480}');
+  r := update_rule(g, '{"duration_min":10}');
+  begin
+    perform update_rule(g, '{"duration_min":481}');
+    raise exception 'FAIL A13: a 481-minute session was saved';
+  exception when check_violation then null;
+  end;
+  begin
+    perform update_rule(g, '{"duration_min":9}');
+    raise exception 'FAIL A13: a 9-minute session was saved';
+  exception when check_violation then null;
+  end;
+  raise notice 'PASS A13: 5 min to 24 h commitments, 10 min to 8 h sessions, far one-offs booked now';
+
   perform delete_my_account();
 end $$;

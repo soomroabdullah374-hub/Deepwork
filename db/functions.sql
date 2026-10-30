@@ -132,7 +132,7 @@ end $$;
 
 -- ───────────────────────── the generator
 -- Expands commitments, then each active goal's weekly rule, into calendar_blocks for the
--- next p_days local days (sessions stop at the goal's deadline). Idempotent: an existing
+-- next p_days local days (sessions run from the goal's start date to its deadline). An existing
 -- block for the same slot is left alone, even if it was moved, cancelled or done.
 -- A slot that would overlap something is skipped and returned as a conflict; nothing is
 -- ever double-booked (the no_overlap constraint is the final guard).
@@ -205,16 +205,17 @@ begin
     end loop;
   end if;
 
-  -- 2) Sessions from each active goal's weekly rule, up to its deadline.
+  -- 2) Sessions from each active goal's weekly rule, from its start date to its deadline.
   if p_commitment is null then
     for r in
-      select g.id as goal_id, g.title, g.deadline, sr.weekdays, sr.start_time, sr.duration_min
+      select g.id as goal_id, g.title, g.start_date, g.deadline, sr.weekdays, sr.start_time, sr.duration_min
         from goals g join schedule_rules sr on sr.goal_id = g.id
        where g.user_id = v_uid and g.status = 'active' and (p_goal is null or g.id = p_goal)
        order by g.created_at, g.id
     loop
       for d in
-        select x::date from generate_series(v_today, least(r.deadline, v_today + (p_days - 1)),
+        select x::date from generate_series(greatest(v_today, r.start_date),
+                                            least(r.deadline, v_today + (p_days - 1)),
                                             interval '1 day') x
       loop
         continue when not (extract(dow from d)::smallint = any (r.weekdays));
@@ -378,7 +379,10 @@ begin
                 case when cardinality(v_days) > 0 then (a ->> 'local_date')::date end,
                 'assistant')
         returning id into v_id;
-        if exists (select 1 from generate_blocks(14, null, v_id)) then
+        -- a one-off past the 14-day horizon is booked right away too
+        if exists (select 1 from generate_blocks(greatest(14, (a ->> 'local_date')::date
+                                                              - (now() at time zone my_tz())::date + 1),
+                                                 null, v_id)) then
           raise exception 'That time is taken.' using errcode = '23P01';
         end if;
         v_undo := v_undo || jsonb_build_object('op', 'delete_commitment', 'id', v_id);

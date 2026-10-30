@@ -25,7 +25,7 @@ Deno.test('plan validation normalises small slips', () => {
     reply_text: 'x'.repeat(400),
     reply_tts: 'ok',
     actions: [
-      action({ title: 'Gym', start_local: '2026-10-26 19:00:00', duration_min: 600, repeat_weekdays: [7, 0, 3] }),
+      action({ title: 'Gym', start_local: '2026-10-26 19:00:00', duration_min: 2000, repeat_weekdays: [7, 0, 3] }),
       action({ type: 'update_rule', goal_id: 'g', rule: { weekdays: [], start_time: '8:30', duration_min: null, lead_min: null } }),
       action({ type: 'clarify', question: 'Which day?', options: ['a', 'b', 'c', 'd'] }),
     ],
@@ -33,7 +33,7 @@ Deno.test('plan validation normalises small slips', () => {
   assertEquals(plan.reply_text.length, 280);
   const [add, rule, ask] = plan.actions;
   assertEquals(add.start_local, '2026-10-26T19:00');
-  assertEquals(add.duration_min, 480);
+  assertEquals(add.duration_min, 1440);
   assertEquals(add.repeat_weekdays, [0, 3]);
   assertEquals(add.goal_id, undefined);
   assertEquals(rule.rule?.weekdays, undefined);

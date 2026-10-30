@@ -10,6 +10,7 @@ import { addDays, daysBetween, weekdayOf } from '../time.ts';
 export interface DraftInput {
   title: string;
   why?: string | null;
+  start_date?: string | null; // YYYY-MM-DD, sessions begin on it (default: tomorrow)
   deadline: string; // YYYY-MM-DD
   weekdays: number[];
   duration_min: number;
@@ -23,11 +24,13 @@ export interface DraftResult {
   source: 'ai' | 'template';
 }
 
-export function capacity(input: Pick<DraftInput, 'deadline' | 'weekdays' | 'duration_min' | 'today'>) {
+export function capacity(input: Pick<DraftInput, 'start_date' | 'deadline' | 'weekdays' | 'duration_min' | 'today'>) {
   let sessions = 0;
-  const days = Math.max(0, daysBetween(input.today, input.deadline));
-  for (let i = 1; i <= days; i++) {
-    if (input.weekdays.includes(weekdayOf(addDays(input.today, i)))) sessions++;
+  const tomorrow = addDays(input.today, 1);
+  const from = input.start_date && input.start_date > tomorrow ? input.start_date : tomorrow;
+  const days = Math.max(0, daysBetween(from, input.deadline) + 1);
+  for (let i = 0; i < days; i++) {
+    if (input.weekdays.includes(weekdayOf(addDays(from, i)))) sessions++;
   }
   return {
     sessions,
@@ -74,6 +77,7 @@ export async function draftPlan(input: DraftInput): Promise<DraftResult> {
             goal: input.title,
             why: input.why || null,
             today: input.today,
+            start_date: input.start_date ?? null,
             deadline: input.deadline,
             weeks_left: cap.weeks,
             sessions_per_week: input.weekdays.length,

@@ -48,6 +48,7 @@ import type { AppState } from '../_shared/state.ts';
 import { occupies } from '../_shared/state.ts';
 import {
   addDays,
+  daysBetween,
   hhmm,
   isValidTimeZone,
   localDate,
@@ -377,7 +378,7 @@ route('GET', '/free-slots', async (ctx) => {
   const ignore = ctx.url.searchParams.get('ignore');
   return json(
     await db.rpc('free_slots', {
-      p_duration_min: intParam(ctx.url, 'minutes', 60, 15, 720),
+      p_duration_min: intParam(ctx.url, 'minutes', 60, 5, 1440),
       p_from: isoParam(ctx.url, 'from', new Date(now)),
       p_to: isoParam(ctx.url, 'to', new Date(now + 7 * DAY)),
       p_limit: intParam(ctx.url, 'limit', 10, 1, 50),
@@ -411,7 +412,7 @@ function validRule(rule: unknown): Record<string, unknown> {
     throw new HttpError(400, 'invalid', 'Pick a start time.');
   }
   const duration = Number(r.duration_min);
-  if (!(duration >= 15 && duration <= 240)) throw new HttpError(400, 'invalid', 'Sessions are 15 to 240 minutes.');
+  if (!(duration >= 10 && duration <= 480)) throw new HttpError(400, 'invalid', 'Sessions are 10 minutes to 8 hours.');
   const lead = r.lead_min === undefined ? 10 : Number(r.lead_min);
   if (!(lead >= 0 && lead <= 120)) throw new HttpError(400, 'invalid', 'Reminders are 0 to 120 minutes before.');
   return { weekdays, start_time: hhmm(r.start_time), duration_min: duration, lead_min: lead };
@@ -430,6 +431,11 @@ function validDate(value: unknown, what: string): string {
   return value;
 }
 
+/** A goal's optional start date: sessions begin on it. Empty means right away. */
+function validStart(value: unknown): string | null {
+  return value === null || value === undefined || value === '' ? null : validDate(value, 'The start date');
+}
+
 route('POST', '/goals', async (ctx) => {
   const { db } = await user(ctx);
   const body = await readJson<Record<string, unknown>>(ctx.req);
@@ -442,6 +448,7 @@ route('POST', '/goals', async (ctx) => {
   const p = {
     title: validTitle(body.title),
     why: typeof body.why === 'string' ? body.why.trim().slice(0, 500) : null,
+    start_date: validStart(body.start_date),
     deadline: validDate(body.deadline, 'The deadline'),
     milestones,
     rule: validRule(body.rule),
@@ -462,6 +469,7 @@ route('POST', '/goals/draft-plan', async (ctx) => {
     await draftPlan({
       title: validTitle(body.title),
       why: typeof body.why === 'string' ? body.why : null,
+      start_date: validStart(body.start_date),
       deadline: validDate(body.deadline, 'The deadline'),
       weekdays: rule.weekdays as number[],
       duration_min: rule.duration_min as number,
@@ -476,6 +484,7 @@ route('PATCH', '/goals/:id', async (ctx) => {
   const p: Record<string, unknown> = {};
   if (body.title !== undefined) p.title = validTitle(body.title);
   if (body.why !== undefined) p.why = typeof body.why === 'string' ? body.why.trim().slice(0, 500) : null;
+  if (body.start_date !== undefined) p.start_date = validStart(body.start_date);
   if (body.deadline !== undefined) p.deadline = validDate(body.deadline, 'The deadline');
   if (body.status !== undefined) {
     if (!['active', 'paused', 'done'].includes(String(body.status))) throw new HttpError(400, 'invalid', 'Unknown status.');
@@ -549,7 +558,7 @@ function validCommitment(body: Record<string, unknown>, needTitle = true): Commi
     throw new HttpError(400, 'invalid', 'Pick a start time.');
   }
   const duration = Number(body.duration_min);
-  if (!(duration >= 15 && duration <= 720)) throw new HttpError(400, 'invalid', 'Commitments are 15 minutes to 12 hours.');
+  if (!(duration >= 5 && duration <= 1440)) throw new HttpError(400, 'invalid', 'Commitments are 5 minutes to 24 hours.');
   return {
     title: needTitle ? validTitle(body.title, 1, 80) : String(body.title ?? '').trim(),
     weekdays: oneOff ? [] : weekdays,
@@ -575,7 +584,9 @@ route('POST', '/commitments/check', async (ctx) => {
   const now = new Date();
   const today = localDate(now, tz);
   const slots: { starts_at: string; ends_at: string }[] = [];
-  for (let i = 0; i < 14; i++) {
+  // the next 14 days, or up to a one-off further out (it is booked when saved)
+  const days = c.one_off_date ? Math.min(400, Math.max(14, daysBetween(today, c.one_off_date) + 1)) : 14;
+  for (let i = 0; i < days; i++) {
     const d = addDays(today, i);
     if (c.one_off_date ? d !== c.one_off_date : !c.weekdays.includes(weekdayOf(d))) continue;
     if (c.starts_on && d < c.starts_on) continue;

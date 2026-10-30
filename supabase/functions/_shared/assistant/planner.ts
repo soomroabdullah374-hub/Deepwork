@@ -66,6 +66,7 @@ export function promptContext(input: ContextInput): PromptContext {
       id: g.id,
       title: g.title,
       status: g.status,
+      ...(g.start_date && g.start_date > today ? { starts: g.start_date } : {}),
       deadline: g.deadline,
       rule: g.rule
         ? {

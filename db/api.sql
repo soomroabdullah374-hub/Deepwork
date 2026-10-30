@@ -151,20 +151,24 @@ begin
 end $$;
 
 -- ───────────────────────── goals
--- p = {title, why, deadline, milestones:[{title}], rule:{weekdays,start_time,duration_min,lead_min}}
+-- p = {title, why, start_date?, deadline, milestones:[{title}], rule:{weekdays,start_time,duration_min,lead_min}}
 create or replace function create_goal(p jsonb) returns jsonb
 language plpgsql volatile security invoker set search_path = public, pg_temp as $$
 declare
-  v_uid  text := require_user();
-  v_goal uuid;
-  i      int := 0;
-  m      jsonb;
+  v_uid   text := require_user();
+  v_goal  uuid;
+  v_start date := nullif(p ->> 'start_date', '')::date;
+  i       int := 0;
+  m       jsonb;
 begin
   if (p ->> 'deadline')::date <= (now() at time zone my_tz())::date then
     raise exception 'The deadline must be tomorrow or later.' using errcode = '22023';
   end if;
-  insert into goals (user_id, title, why, deadline)
-  values (v_uid, btrim(p ->> 'title'), nullif(btrim(coalesce(p ->> 'why', '')), ''), (p ->> 'deadline')::date)
+  if v_start > (p ->> 'deadline')::date then
+    raise exception 'The start date must be on or before the deadline.' using errcode = '22023';
+  end if;
+  insert into goals (user_id, title, why, start_date, deadline)
+  values (v_uid, btrim(p ->> 'title'), nullif(btrim(coalesce(p ->> 'why', '')), ''), v_start, (p ->> 'deadline')::date)
   returning id into v_goal;
 
   for m in select value from jsonb_array_elements(coalesce(p -> 'milestones', '[]')) loop
@@ -185,32 +189,44 @@ begin
     'conflicts', (select coalesce(jsonb_agg(to_jsonb(c)), '[]') from generate_blocks(14, v_goal) c));
 end $$;
 
--- p may hold title, why, deadline, status. A new deadline regenerates future sessions.
+-- p may hold title, why, start_date (null: right away), deadline, status. New dates
+-- regenerate future sessions.
 create or replace function update_goal(p_goal uuid, p jsonb) returns jsonb
 language plpgsql volatile security invoker set search_path = public, pg_temp as $$
 declare
-  v_uid text := require_user();
-  v_old goals;
+  v_uid       text := require_user();
+  v_old       goals;
+  v_new       goals;
+  v_start     date;
+  v_deadline  date;
   v_conflicts jsonb := '[]';
 begin
   select * into v_old from goals where id = p_goal and user_id = v_uid for update;
   if not found then
     raise exception 'goal not found' using errcode = 'P0002';
   end if;
+  v_start := case when p ? 'start_date' then nullif(p ->> 'start_date', '')::date else v_old.start_date end;
+  v_deadline := case when p ? 'deadline' then (p ->> 'deadline')::date else v_old.deadline end;
+  if v_start > v_deadline then
+    raise exception 'The start date must be on or before the deadline.' using errcode = '22023';
+  end if;
   update goals set
-    title    = case when p ? 'title' then btrim(p ->> 'title') else title end,
-    why      = case when p ? 'why' then nullif(btrim(coalesce(p ->> 'why', '')), '') else why end,
-    deadline = case when p ? 'deadline' then (p ->> 'deadline')::date else deadline end
-  where id = p_goal;
+    title      = case when p ? 'title' then btrim(p ->> 'title') else title end,
+    why        = case when p ? 'why' then nullif(btrim(coalesce(p ->> 'why', '')), '') else why end,
+    start_date = v_start,
+    deadline   = v_deadline
+  where id = p_goal
+  returning * into v_new;
 
   if p ? 'status' and p ->> 'status' is distinct from v_old.status then
     select coalesce(jsonb_agg(to_jsonb(c)), '[]') into v_conflicts from set_goal_status(p_goal, p ->> 'status') c;
-  elsif p ? 'deadline' and (p ->> 'deadline')::date is distinct from v_old.deadline then
-    -- sessions after a shortened deadline go; an extended one gets new sessions
+  elsif v_new.deadline is distinct from v_old.deadline or v_new.start_date is distinct from v_old.start_date then
+    -- sessions outside the new dates go; days newly inside them get sessions
     delete from calendar_blocks b
      where b.user_id = v_uid and b.goal_id = p_goal and b.status in ('planned', 'snoozed')
        and lower(b.period) > now()
-       and (lower(b.period) at time zone my_tz())::date > (p ->> 'deadline')::date;
+       and ((lower(b.period) at time zone my_tz())::date > v_new.deadline
+            or (lower(b.period) at time zone my_tz())::date < v_new.start_date);
     select coalesce(jsonb_agg(to_jsonb(c)), '[]') into v_conflicts from regenerate_goal(p_goal) c;
   end if;
   return jsonb_build_object('goal_id', p_goal, 'conflicts', v_conflicts);
@@ -330,7 +346,9 @@ begin
      where b.user_id = v_uid and b.commitment_id = v_id and b.status = 'planned' and lower(b.period) > now();
   end if;
 
-  select * into c from generate_blocks(14, null, v_id) limit 1;
+  -- a one-off past the 14-day horizon is booked (and checked) right away too
+  select * into c from generate_blocks(greatest(14, (p ->> 'one_off_date')::date - (now() at time zone my_tz())::date + 1),
+                                       null, v_id) limit 1;
   if c.kind is not null then
     raise exception 'That time is taken.' using errcode = '23P01',
       detail = jsonb_build_object('id', c.clash_id, 'title', c.clash_title,

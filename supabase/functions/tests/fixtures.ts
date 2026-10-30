@@ -42,6 +42,7 @@ const goal = (id: string, title: string, weekdays: number[], start: string, minu
   id,
   title,
   why: null,
+  start_date: null,
   deadline,
   status: 'active',
   created_at: '2026-10-01T00:00:00Z',

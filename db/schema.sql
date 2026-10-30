@@ -85,11 +85,13 @@ create table goals (
   user_id    text not null default current_uid(),
   title      text not null check (char_length(title) between 3 and 80),
   why        text check (char_length(why) <= 500),
+  start_date date,                 -- sessions begin on this day (null: right away)
   deadline   date not null,
   status     text not null default 'active' check (status in ('active', 'paused', 'done')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (id, user_id)
+  unique (id, user_id),
+  constraint goals_start_before_deadline check (start_date is null or start_date <= deadline)
 );
 create index goals_user_status on goals (user_id, status);
 create trigger goals_touch before update on goals
@@ -112,7 +114,7 @@ create table schedule_rules (
   weekdays     smallint[] not null check (cardinality(weekdays) between 1 and 7
                                           and weekdays <@ array[0,1,2,3,4,5,6]::smallint[]),  -- 0=Sun..6=Sat
   start_time   time not null,
-  duration_min int  not null check (duration_min between 15 and 240),
+  duration_min int  not null check (duration_min between 10 and 480),
   lead_min     int  not null default 10 check (lead_min between 0 and 120),
   foreign key (goal_id, user_id) references goals (id, user_id) on delete cascade
 );
@@ -124,7 +126,7 @@ create table commitments (
   title        text not null check (char_length(title) between 1 and 80),
   weekdays     smallint[] not null default '{}' check (weekdays <@ array[0,1,2,3,4,5,6]::smallint[]),
   start_time   time not null,
-  duration_min int  not null check (duration_min between 15 and 720),
+  duration_min int  not null check (duration_min between 5 and 1440),
   one_off_date date,                 -- set for a single occurrence instead of weekly
   starts_on    date,                 -- weekly series begin on this date (inclusive)
   created_by   text not null default 'app' check (created_by in ('app', 'assistant')),

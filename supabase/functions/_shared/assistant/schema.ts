@@ -104,14 +104,14 @@ export const ActionSchema = z.object({
   session_id: opt(z.string().trim().min(1)),
   commitment_id: opt(z.string().trim().min(1)),
   start_local: opt(localStamp),
-  duration_min: opt(minutes(15, 480)),
+  duration_min: opt(minutes(5, 1440)),
   repeat_weekdays: opt(weekdays),
   scope: opt(z.enum(['one', 'series'])),
   rule: opt(
     z.object({
       weekdays: opt(weekdays.transform((d) => (d.length ? d : undefined))),
       start_time: opt(hhmm),
-      duration_min: opt(minutes(15, 240)),
+      duration_min: opt(minutes(10, 480)),
       lead_min: opt(minutes(0, 120)),
     }),
   ),

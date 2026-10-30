@@ -19,6 +19,7 @@ export interface Goal {
   id: string;
   title: string;
   why: string | null;
+  start_date: string | null; // "YYYY-MM-DD", sessions begin on it
   deadline: string; // "YYYY-MM-DD"
   status: 'active' | 'paused' | 'done';
   created_at: string;
