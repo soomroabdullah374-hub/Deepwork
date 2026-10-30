@@ -31,7 +31,7 @@ let lastState: AppState | null = null;
 
 /**
  * The state once loaded. Screens live below the loading gate in (app)/_layout, and the
- * last good copy covers the moment the cache is cleared on sign-out.
+ * last good copy covers the moment the cache is cleared after "Delete all my data".
  */
 export function useLoadedState(): AppState {
   const { data } = useAppState();

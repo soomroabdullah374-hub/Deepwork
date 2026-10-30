@@ -15,7 +15,7 @@ English, Urdu and Roman Urdu.
 
 ```
 phone ──HTTPS──▶ Supabase Edge Function `api` ──Neon Data API (user's JWT, RLS)──▶ Neon Postgres
-  │                    │  └─▶ Neon Auth (email + password, emailed codes, Google)
+  │                    │  └─▶ Neon Auth (a private account per phone, no sign-in screen)
   │                    ├─▶ AssemblyAI (speech → text, English + Urdu)
   │                    ├─▶ Groq / xAI (plan the change, strict JSON schema)
   │                    └─▶ ElevenLabs (spoken reply, Urdu script for Urdu)
@@ -26,6 +26,10 @@ pg_cron (Supabase) ──every minute──▶ Edge Function `dispatcher`
 * **No double-booking, ever.** `calendar_blocks` has an `EXCLUDE USING gist` constraint per
   user over the block's time range. The generator, the app and the assistant all go through
   it; clashes come back as friendly 409s naming what is already there.
+* **No sign-in screen.** On first use the app creates a private account for the phone (a random
+  `@deepwork.invalid` address and password, kept in the phone's secure storage) and signs back in
+  with it whenever the session runs out. Your plan is tied to the app on that phone; Settings ›
+  Export keeps a copy, and Settings › Delete all my data removes everything.
 * **Row-level security on every table.** The API never holds a database password for user
   requests: it forwards the user's own Neon Auth JWT to the Neon Data API.
 * **The assistant never writes on its own.** It proposes a plan; the server resolves every

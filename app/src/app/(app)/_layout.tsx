@@ -1,5 +1,6 @@
-// Everything behind sign-in. Loads the app state once, keeps reminders in sync with it
-// and turns notification taps and actions into navigation or quick changes.
+// The app proper, once this phone's account is ready. Loads the app state once, keeps
+// reminders in sync with it and turns notification taps and actions into navigation or
+// quick changes.
 
 import * as Notifications from 'expo-notifications';
 import * as Linking from 'expo-linking';
@@ -9,7 +10,7 @@ import { Platform } from 'react-native';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { showBanner } from '@/lib/banner';
-import { ApiError, errorMessage } from '@/lib/http';
+import { errorMessage } from '@/lib/http';
 import { askPermission, syncReminders } from '@/lib/notifications';
 import { getFlag, setFlag, setTheme } from '@/lib/prefs';
 import { queryClient, STATE_KEY, useAppState } from '@/lib/queries';
@@ -90,14 +91,10 @@ export default function AppLayout() {
     })();
   }, [data]);
 
-  if (auth.status === 'signed_out') return <Redirect href="/sign-in" />;
+  if (auth.status === 'signed_out') return <Redirect href="/" />;
   if (auth.status === 'loading') return <Loading />;
   if (!data) {
-    if (state.error) {
-      const signedOut = state.error instanceof ApiError && state.error.status === 401;
-      if (signedOut) return <Redirect href="/sign-in" />;
-      return <ErrorState message={errorMessage(state.error)} onRetry={() => state.refetch()} />;
-    }
+    if (state.error) return <ErrorState message={errorMessage(state.error)} onRetry={() => state.refetch()} />;
     return <Loading />;
   }
 

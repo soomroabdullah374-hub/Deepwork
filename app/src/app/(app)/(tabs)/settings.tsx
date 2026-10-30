@@ -10,7 +10,7 @@ import { Linking, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TimeTile } from '@/features/pickers';
 import { api } from '@/lib/api';
-import { forgetSession, signOut } from '@/lib/auth';
+import { forgetAccount } from '@/lib/auth';
 import { showBanner } from '@/lib/banner';
 import { errorMessage } from '@/lib/http';
 import { overlapCount } from '@/lib/model';
@@ -154,8 +154,8 @@ export default function Settings() {
     setBusy('delete');
     try {
       await api.deleteAccount();
-      await forgetSession();
-      router.replace('/sign-in');
+      await forgetAccount();
+      router.replace('/onboarding');
     } catch (err) {
       showBanner(errorMessage(err), 'danger');
       setBusy(null);
@@ -246,10 +246,16 @@ export default function Settings() {
         </Group>
 
         <Group title="Your data">
-          <Row first label="Export everything (JSON)" icon="download" onPress={busy ? undefined : exportData} value={busy === 'export' ? 'Preparing…' : undefined} />
+          <Row
+            first
+            label="Export everything (JSON)"
+            caption="Your plan lives with the app on this phone"
+            icon="download"
+            onPress={busy ? undefined : exportData}
+            value={busy === 'export' ? 'Preparing…' : undefined}
+          />
           <Row label="Privacy policy" icon="shield" onPress={() => router.push('/privacy')} />
-          <Row label="Sign out" icon="logout" onPress={() => signOut().then(() => router.replace('/sign-in'))} />
-          <Row label="Delete account" danger onPress={() => setSheet('delete')} />
+          <Row label="Delete all my data" danger onPress={() => setSheet('delete')} />
         </Group>
 
         <T variant="caption" tone="secondary" align="center">
@@ -322,9 +328,9 @@ export default function Settings() {
       </Sheet>
 
       <Sheet visible={sheet === 'delete'} onClose={() => setSheet(null)}>
-        <T variant="h2">Delete account</T>
+        <T variant="h2">Delete all my data</T>
         <T tone="secondary">
-          This removes your account, goals, sessions, commitments and assistant history, right away. It can't be undone. Export first if you want a copy.
+          This removes your goals, sessions, commitments and assistant history from DeepWork, right away, and the app starts fresh. It can't be undone. Export first if you want a copy.
         </T>
         <Field label="Type DELETE to confirm" value={confirm} onChangeText={setConfirm} autoCapitalize="characters" />
         <Button label="Delete everything" variant="danger" disabled={confirm.trim() !== 'DELETE'} loading={busy === 'delete'} onPress={deleteAccount} />

@@ -1,9 +1,13 @@
-// [12] Onboarding: three swipeable slides on a Sand panel.
+// [12] Onboarding: three swipeable slides on a Sand panel. "Get started" (or Skip)
+// creates this phone's account; there is no sign-in screen.
 
 import { router } from 'expo-router';
 import { useRef, useState } from 'react';
 import { FlatList, Pressable, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { startAccount } from '@/lib/auth';
+import { showBanner } from '@/lib/banner';
+import { errorMessage } from '@/lib/http';
 import { setFlag } from '@/lib/prefs';
 import { fonts, useTheme } from '@/lib/theme';
 import { BrandRow, Button, IconButton, ReminderCard, RingFlag, T, WeekColumns } from '@/ui';
@@ -19,15 +23,26 @@ export default function Onboarding() {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(0);
+  const [busy, setBusy] = useState(false);
   const list = useRef<FlatList>(null);
 
   const finish = async () => {
-    await setFlag('onboarded');
-    router.replace('/sign-in');
+    if (busy) return;
+    setBusy(true);
+    try {
+      await setFlag('onboarded');
+      await startAccount();
+      router.replace('/today');
+    } catch (err) {
+      showBanner(errorMessage(err), 'danger');
+      setBusy(false);
+    }
   };
   const next = () => {
-    if (index < SLIDES.length - 1) list.current?.scrollToIndex({ index: index + 1 });
-    else finish();
+    if (index >= SLIDES.length - 1) return finish();
+    // Programmatic scrolls don't report momentum end everywhere, so move the dots here.
+    setIndex(index + 1);
+    list.current?.scrollToIndex({ index: index + 1 });
   };
 
   return (
@@ -88,7 +103,7 @@ export default function Onboarding() {
           ))}
         </View>
         {index === SLIDES.length - 1 ? (
-          <Button label="Get started" iconRight="arrowRight" onPress={finish} style={{ borderRadius: 999, paddingHorizontal: 24 }} />
+          <Button label="Get started" iconRight="arrowRight" loading={busy} onPress={finish} style={{ borderRadius: 999, paddingHorizontal: 24 }} />
         ) : (
           <IconButton icon="arrowRight" label="Next" tone="kiln" size={64} iconSize={24} onPress={next} />
         )}

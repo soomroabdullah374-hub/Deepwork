@@ -1,8 +1,10 @@
-// Sign-in state. The session cookie lives in the phone's secure storage; the 15-minute
-// JWT lives in memory and is refreshed through the API before it runs out.
+// This phone's DeepWork account. There is no sign-in screen: the first time the app is
+// used it creates a private account for the phone, with a random address and password
+// kept in the phone's secure storage, and signs back in with them whenever the session
+// runs out. The session cookie lives in secure storage too; the 15-minute JWT lives in
+// memory and is refreshed through the API before it runs out.
 
-import * as Linking from 'expo-linking';
-import * as WebBrowser from 'expo-web-browser';
+import * as Crypto from 'expo-crypto';
 import { useSyncExternalStore } from 'react';
 import { ApiError, call } from './http';
 import { getItem, removeItem, setItem } from './storage';
@@ -10,18 +12,25 @@ import type { AuthResult, AuthUser } from './types';
 
 const SESSION_KEY = 'deepwork.session';
 const USER_KEY = 'deepwork.user';
+const DEVICE_KEY = 'deepwork.device';
 
+/** `signed_out`: no account on this phone yet (first run, or after deleting everything). */
 export type AuthStatus = 'loading' | 'signed_out' | 'signed_in';
 export interface AuthSnapshot {
   status: AuthStatus;
   user: AuthUser | null;
 }
 
+interface DeviceCredentials {
+  email: string;
+  password: string;
+}
+
 let session: string | null = null;
 let jwt: { token: string; exp: number } | null = null;
 let snapshot: AuthSnapshot = { status: 'loading', user: null };
 const listeners = new Set<() => void>();
-const signOutHandlers = new Set<() => void | Promise<void>>();
+const resetHandlers = new Set<() => void | Promise<void>>();
 
 function set(next: Partial<AuthSnapshot>) {
   snapshot = { ...snapshot, ...next };
@@ -38,14 +47,14 @@ export function useAuth(): AuthSnapshot {
   );
 }
 
-export function getUser(): AuthUser | null {
-  return snapshot.user;
+export function getAuth(): AuthSnapshot {
+  return snapshot;
 }
 
-/** Run when the user signs out or the session ends (clear caches, notifications…). */
-export function onSignOut(handler: () => void | Promise<void>): () => void {
-  signOutHandlers.add(handler);
-  return () => signOutHandlers.delete(handler);
+/** Run when this phone's account is forgotten (clear caches, notifications…). */
+export function onAccountReset(handler: () => void | Promise<void>): () => void {
+  resetHandlers.add(handler);
+  return () => resetHandlers.delete(handler);
 }
 
 function decodeExp(token: string): number {
@@ -66,33 +75,64 @@ async function save(result: AuthResult) {
   set({ status: 'signed_in', user: result.user });
 }
 
-async function clear() {
-  session = null;
-  jwt = null;
-  await removeItem(SESSION_KEY).catch(() => undefined);
-  await removeItem(USER_KEY).catch(() => undefined);
-  set({ status: 'signed_out', user: null });
-  for (const h of signOutHandlers) await Promise.resolve(h()).catch(() => undefined);
+const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+
+async function loadCredentials(): Promise<DeviceCredentials | null> {
+  const raw = await getItem(DEVICE_KEY).catch(() => null);
+  if (!raw) return null;
+  try {
+    const c = JSON.parse(raw) as Partial<DeviceCredentials>;
+    return typeof c.email === 'string' && typeof c.password === 'string' ? { email: c.email, password: c.password } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Sign in with this phone's account, creating it the first time. */
+async function signInDevice(): Promise<string> {
+  const existing = await loadCredentials();
+  if (existing) {
+    try {
+      const result = await call<AuthResult>('POST', '/auth/sign-in', { body: existing });
+      await save(result);
+      return result.jwt;
+    } catch (err) {
+      // Offline or a busy server: keep the credentials and try again later. Only an
+      // account that no longer exists is replaced.
+      if (!(err instanceof ApiError && err.status === 401)) throw err;
+    }
+  }
+  // `.invalid` is reserved: the address can never receive mail.
+  const fresh: DeviceCredentials = {
+    email: `phone-${hex(Crypto.getRandomBytes(8))}@deepwork.invalid`,
+    password: hex(Crypto.getRandomBytes(24)),
+  };
+  await setItem(DEVICE_KEY, JSON.stringify(fresh));
+  const result = await call<AuthResult>('POST', '/auth/sign-up', { body: { ...fresh, name: '' } });
+  await save(result);
+  return result.jwt;
 }
 
 let refreshing: Promise<string> | null = null;
 
 async function refresh(): Promise<string> {
-  if (!session) throw new ApiError(401, 'signed_out', 'Please sign in.');
   if (!refreshing) {
     const current = session;
-    refreshing = call<AuthResult>('POST', '/auth/token', { body: { session: current } })
-      .then(async (result) => {
-        await save(result);
-        return result.jwt;
-      })
-      .catch(async (err) => {
-        if (err instanceof ApiError && err.status === 401 && session === current) await clear();
-        throw err;
-      })
-      .finally(() => {
-        refreshing = null;
-      });
+    refreshing = (async () => {
+      if (current) {
+        try {
+          const result = await call<AuthResult>('POST', '/auth/token', { body: { session: current } });
+          await save(result);
+          return result.jwt;
+        } catch (err) {
+          if (!(err instanceof ApiError && err.status === 401)) throw err;
+          // The session ran out: sign in again below.
+        }
+      }
+      return await signInDevice();
+    })().finally(() => {
+      refreshing = null;
+    });
   }
   return refreshing;
 }
@@ -103,61 +143,39 @@ export async function getToken(force = false): Promise<string> {
   return refresh();
 }
 
-/** Restore the saved session on launch. Offline launches keep the cached user. */
+/** Restore this phone's account on launch. Offline launches keep the cached user. */
 export async function bootstrap(): Promise<void> {
   session = await getItem(SESSION_KEY).catch(() => null);
-  const cached = await getItem(USER_KEY).catch(() => null);
-  const user = cached ? (JSON.parse(cached) as AuthUser) : null;
-  if (!session) {
+  let user: AuthUser | null = null;
+  try {
+    user = JSON.parse((await getItem(USER_KEY).catch(() => null)) ?? 'null') as AuthUser | null;
+  } catch {
+    user = null;
+  }
+  if (!session && !(await loadCredentials())) {
     set({ status: 'signed_out', user: null });
     return;
   }
   try {
     await refresh();
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 401) return; // clear() already ran
+  } catch {
     set({ status: 'signed_in', user });
   }
 }
 
-export async function signIn(email: string, password: string) {
-  await save(await call<AuthResult>('POST', '/auth/sign-in', { body: { email, password } }));
+/** First run (or after deleting everything): create this phone's account and sign in. */
+export async function startAccount(): Promise<void> {
+  if (snapshot.status === 'signed_in' && session) return;
+  await refresh();
 }
 
-export async function signUp(name: string, email: string, password: string) {
-  await save(await call<AuthResult>('POST', '/auth/sign-up', { body: { name, email, password } }));
-}
-
-export async function sendCode(email: string) {
-  await call('POST', '/auth/code', { body: { email } });
-}
-
-export async function verifyCode(email: string, code: string) {
-  await save(await call<AuthResult>('POST', '/auth/code/verify', { body: { email, code } }));
-}
-
-/** Google: open the provider in an auth session and finish with the returned verifier. */
-export async function signInWithGoogle(): Promise<boolean> {
-  const { url, challenge } = await call<{ url: string; challenge: string }>('POST', '/auth/social', {
-    body: { provider: 'google' },
-  });
-  const result = await WebBrowser.openAuthSessionAsync(url, 'deepwork://auth/callback');
-  if (result.type !== 'success') return false;
-  const verifier = Linking.parse(result.url).queryParams?.neon_auth_session_verifier;
-  if (typeof verifier !== 'string' || !verifier) {
-    throw new ApiError(400, 'auth_failed', 'Google sign-in did not finish. Please try again.');
-  }
-  await save(await call<AuthResult>('POST', '/auth/social/finish', { body: { verifier, challenge } }));
-  return true;
-}
-
-export async function signOut() {
-  const current = session;
-  if (current) await call('POST', '/auth/sign-out', { body: { session: current } }).catch(() => undefined);
-  await clear();
-}
-
-/** After the account is deleted on the server. */
-export async function forgetSession() {
-  await clear();
+/** After everything was deleted on the server: forget this phone's account too. */
+export async function forgetAccount() {
+  session = null;
+  jwt = null;
+  await removeItem(DEVICE_KEY).catch(() => undefined);
+  await removeItem(SESSION_KEY).catch(() => undefined);
+  await removeItem(USER_KEY).catch(() => undefined);
+  set({ status: 'signed_out', user: null });
+  for (const h of resetHandlers) await Promise.resolve(h()).catch(() => undefined);
 }

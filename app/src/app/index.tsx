@@ -1,11 +1,11 @@
 // [11] Launch: Kiln background, the mark draws in, then the wordmark rises.
-// Holds until the saved session is checked (at least 1.2 s), then routes on.
+// Holds until this phone's account is checked (at least 1.2 s), then routes on.
 
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
-import { useAuth } from '@/lib/auth';
+import { startAccount, useAuth } from '@/lib/auth';
 import { useRise } from '@/lib/motion';
 import { getFlag } from '@/lib/prefs';
 import { fonts } from '@/lib/theme';
@@ -23,6 +23,7 @@ export default function Launch() {
   const reduced = useReducedMotion();
   const [minTimeDone, setMinTimeDone] = useState(false);
   const [showWords, setShowWords] = useState(false);
+  const routed = useRef(false);
   const bar = useSharedValue(0);
 
   useEffect(() => {
@@ -36,10 +37,19 @@ export default function Launch() {
   }, [bar, reduced]);
 
   useEffect(() => {
-    if (!minTimeDone || auth.status === 'loading') return;
+    if (!minTimeDone || auth.status === 'loading' || routed.current) return;
+    routed.current = true;
     (async () => {
-      if (auth.status === 'signed_in') router.replace('/today');
-      else router.replace((await getFlag('onboarded')) ? '/sign-in' : '/onboarding');
+      if (auth.status === 'signed_in') return router.replace('/today');
+      if (!(await getFlag('onboarded'))) return router.replace('/onboarding');
+      // Seen the intro before, but there is no account on this phone (everything was
+      // deleted): start a fresh one. If that fails, the intro's button tries again.
+      try {
+        await startAccount();
+        router.replace('/today');
+      } catch {
+        router.replace('/onboarding');
+      }
     })();
   }, [auth.status, minTimeDone]);
 

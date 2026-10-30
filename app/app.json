@@ -3,7 +3,7 @@
     "name": "DeepWork",
     "slug": "deepwork",
     "scheme": "deepwork",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.deepwork.app",
-      "versionCode": 1,
+      "versionCode": 2,
       "adaptiveIcon": {
         "backgroundColor": "#B8532F",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -64,7 +64,6 @@
         }
       ],
       "expo-secure-store",
-      "expo-web-browser",
       "expo-localization",
       "expo-sharing",
       "expo-font",
