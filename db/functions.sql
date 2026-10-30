@@ -336,6 +336,8 @@ $$;
 -- The planner stores resolved actions (concrete UTC times, checked ids) in
 -- assistant_runs.checks. Apply runs only the requested indexes whose status is 'ok',
 -- in one transaction. Any overlap raises 23P01 and rolls everything back.
+-- Order matches the planner's checks: cancels and deletes free their time first, then
+-- moves, then rhythm changes, then adds.
 create or replace function assistant_apply(p_run uuid, p_indexes int[])
 returns jsonb
 language plpgsql volatile security invoker set search_path = public, pg_temp as $$
@@ -362,7 +364,10 @@ begin
   for a in
     select t.value from jsonb_array_elements(v_run.checks) with ordinality as t(value, ord)
      where (t.ord - 1)::int = any (p_indexes) and t.value ->> 'status' = 'ok'
-     order by t.ord
+     order by case t.value ->> 'type'
+                when 'cancel_session' then 0 when 'delete_commitment' then 0
+                when 'move_session' then 1 when 'update_rule' then 2 else 3 end,
+              t.ord
   loop
     case a ->> 'type'
       when 'add_commitment' then

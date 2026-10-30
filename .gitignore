@@ -30,3 +30,4 @@ coverage/
 .idea/
 .vscode/
 *.log
+__pycache__/

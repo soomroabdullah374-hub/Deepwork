@@ -1,0 +1,9 @@
+# DeepWork's backend runs on Supabase Edge Functions. Data and auth live in Neon, so the
+# functions verify Neon Auth JWTs themselves; Supabase's own JWT check is turned off.
+project_id = "kqlrbkgiedrkhzthbqxk"
+
+[functions.api]
+verify_jwt = false
+
+[functions.dispatcher]
+verify_jwt = false
