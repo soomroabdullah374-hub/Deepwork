@@ -90,3 +90,12 @@ export interface AppState {
 export function occupies(b: Pick<Block, 'status'>): boolean {
   return b.status !== 'cancelled' && b.status !== 'skipped';
 }
+
+/**
+ * A generated session that a rhythm edit replaces (regenerate_goal() deletes these). Any
+ * other session of the goal is kept, and its day gets no new rule session.
+ */
+export function regenerable(b: Block, now: Date): boolean {
+  return b.kind === 'session' && b.status === 'planned' && b.created_by === 'generator' && b.slot_start !== null &&
+    new Date(b.slot_start).getTime() === new Date(b.starts_at).getTime() && new Date(b.starts_at) > now;
+}

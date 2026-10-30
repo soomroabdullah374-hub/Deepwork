@@ -44,10 +44,11 @@ import { corsHeaders, errorResponse, HttpError, json, readJson } from '../_share
 import { type AuthUser, requireUser } from '../_shared/auth.ts';
 import { Db } from '../_shared/neon.ts';
 import * as neonAuth from '../_shared/neon-auth.ts';
-import type { AppState } from '../_shared/state.ts';
-import { occupies } from '../_shared/state.ts';
+import type { AppState, Block } from '../_shared/state.ts';
+import { occupies, regenerable } from '../_shared/state.ts';
 import {
   addDays,
+  addMinutes,
   daysBetween,
   hhmm,
   isValidTimeZone,
@@ -583,13 +584,26 @@ route('POST', '/commitments/check', async (ctx) => {
   const tz = profile.timezone;
   const now = new Date();
   const today = localDate(now, tz);
+  const until = body.until ? validDate(body.until, 'The last day') : null;
   const slots: { starts_at: string; ends_at: string }[] = [];
   // the next 14 days, or up to a one-off further out (it is booked when saved)
   const days = c.one_off_date ? Math.min(400, Math.max(14, daysBetween(today, c.one_off_date) + 1)) : 14;
+  // A goal's rhythm, like the generator, books nothing on a day that keeps one of its
+  // sessions (moved, done or cancelled), so those days can't clash.
+  const keptDays = new Set<string>();
+  if (ignoreGoal) {
+    const blocks = await db.rpc<Block[]>('list_blocks', {
+      p_from: addMinutes(localToUtc(`${today}T00:00`, tz), -24 * 60).toISOString(),
+      p_to: new Date(now.getTime() + (days + 1) * DAY).toISOString(),
+      p_goal: ignoreGoal,
+    });
+    for (const b of blocks) if (b.slot_start && !regenerable(b, now)) keptDays.add(localDate(b.slot_start, tz));
+  }
   for (let i = 0; i < days; i++) {
     const d = addDays(today, i);
     if (c.one_off_date ? d !== c.one_off_date : !c.weekdays.includes(weekdayOf(d))) continue;
     if (c.starts_on && d < c.starts_on) continue;
+    if ((until && d > until) || keptDays.has(d)) continue;
     const start = localToUtc(`${d}T${c.start_time}`, tz);
     const end = new Date(start.getTime() + c.duration_min * 60_000);
     if (end > now) slots.push({ starts_at: start.toISOString(), ends_at: end.toISOString() });

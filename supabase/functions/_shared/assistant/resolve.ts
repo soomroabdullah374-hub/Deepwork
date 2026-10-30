@@ -5,7 +5,7 @@
 
 import type { ActionType, Plan, PlanAction } from './schema.ts';
 import type { AppState, Block, Commitment, Goal } from '../state.ts';
-import { occupies } from '../state.ts';
+import { occupies, regenerable } from '../state.ts';
 import type { Db } from '../neon.ts';
 import {
   addDays,
@@ -430,14 +430,9 @@ class Resolver {
         };
         // Mirror regenerate_goal(): untouched future generated sessions are replaced; days
         // that keep a moved or finished session of this goal get no new one.
-        const regenerable = this.state.blocks.filter(
-          (b) =>
-            b.goal_id === goal.id && b.kind === 'session' && b.status === 'planned' &&
-            b.created_by === 'generator' && b.slot_start !== null &&
-            new Date(b.slot_start).getTime() === new Date(b.starts_at).getTime() &&
-            new Date(b.starts_at) > this.now,
+        const regenIds = new Set(
+          this.state.blocks.filter((b) => b.goal_id === goal.id && regenerable(b, this.now)).map((b) => b.id),
         );
-        const regenIds = new Set(regenerable.map((b) => b.id));
         const keptDays = new Set(
           this.state.blocks
             .filter((b) => b.goal_id === goal.id && b.slot_start && !regenIds.has(b.id))

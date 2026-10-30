@@ -39,6 +39,7 @@ declare
   r        extensions.http_response;
   b        jsonb;
   v_goal   text;
+  v_goal2  text;
   v_block  text;
   v_slot   jsonb;
 begin
@@ -162,6 +163,58 @@ begin
   step := 'rhythm back to evenings'; status := r.status;
   ok := r.status = 200 and jsonb_array_length(pg_temp.j(r.content) -> 'conflicts') = 0;
   info := left(r.content, 80); return next;
+
+  -- ── a goal that starts later, and freer lengths
+  r := pg_temp.call('POST', v_api || '/goals/draft-plan', v_jwt, jsonb_build_object(
+         'title', 'Read twelve books', 'start_date', (v_today + 9)::text, 'deadline', (v_today + 30)::text,
+         'rule', jsonb_build_object('weekdays', jsonb_build_array(0, 1, 2, 3, 4, 5, 6), 'start_time', '06:00', 'duration_min', 30)));
+  b := pg_temp.j(r.content);
+  step := 'draft counts from the start date'; status := r.status;
+  ok := r.status = 200 and (b -> 'capacity' ->> 'sessions')::int = 22;
+  info := format('sessions=%s', b -> 'capacity' ->> 'sessions'); return next;
+
+  r := pg_temp.call('POST', v_api || '/goals', v_jwt, jsonb_build_object(
+         'title', 'Read twelve books', 'start_date', (v_today + 9)::text, 'deadline', (v_today + 30)::text,
+         'rule', jsonb_build_object('weekdays', jsonb_build_array(0, 1, 2, 3, 4, 5, 6), 'start_time', '06:00', 'duration_min', 30)));
+  v_goal2 := pg_temp.j(r.content) ->> 'goal_id';
+  r := pg_temp.call('GET', v_api || '/blocks?goal=' || v_goal2, v_jwt);
+  b := pg_temp.j(r.content);
+  step := 'goal starts on its start date'; status := r.status;
+  info := (select min(((x ->> 'starts_at')::timestamptz at time zone 'Asia/Karachi')::date)::text from jsonb_array_elements(b) x);
+  ok := r.status = 200 and info = (v_today + 9)::text; return next;
+
+  r := pg_temp.call('PATCH', v_api || '/goals/' || v_goal2, v_jwt, jsonb_build_object('start_date', (v_today + 3)::text));
+  r := pg_temp.call('GET', v_api || '/blocks?goal=' || v_goal2, v_jwt);
+  b := pg_temp.j(r.content);
+  step := 'earlier start re-books'; status := r.status;
+  info := (select min(((x ->> 'starts_at')::timestamptz at time zone 'Asia/Karachi')::date)::text from jsonb_array_elements(b) x);
+  ok := r.status = 200 and info = (v_today + 3)::text; return next;
+
+  r := pg_temp.call('PATCH', v_api || '/goals/' || v_goal2, v_jwt, jsonb_build_object('start_date', (v_today + 31)::text));
+  step := 'start after the deadline refused'; status := r.status;
+  ok := r.status = 400 and pg_temp.j(r.content) -> 'error' ->> 'message' = 'The start date must be on or before the deadline.';
+  info := pg_temp.j(r.content) -> 'error' ->> 'message'; return next;
+
+  r := pg_temp.call('POST', v_api || '/commitments', v_jwt, jsonb_build_object(
+         'title', 'Wedding', 'weekdays', '[]'::jsonb, 'one_off_date', (v_today + 45)::text,
+         'start_time', '09:00', 'duration_min', 720));
+  step := '12-hour one-off 45 days out'; status := r.status; ok := r.status = 201; info := left(r.content, 80);
+  if ok then
+    r := pg_temp.call('GET', v_api || '/blocks?from=' || to_char(now() + interval '44 days', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                      || '&to=' || to_char(now() + interval '47 days', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), v_jwt);
+    ok := exists (select 1 from jsonb_array_elements(pg_temp.j(r.content)) x where x ->> 'title' = 'Wedding');
+    info := case when ok then 'booked now, 45 days ahead' else left(r.content, 120) end;
+  end if;
+  return next;
+
+  r := pg_temp.call('POST', v_api || '/commitments', v_jwt,
+         '{"title":"Pill","weekdays":[0],"start_time":"06:45","duration_min":5}');
+  step := '5-minute commitment'; status := r.status; ok := r.status = 201; info := left(r.content, 80); return next;
+
+  r := pg_temp.call('PUT', v_api || '/goals/' || v_goal2 || '/rule', v_jwt,
+         '{"weekdays":[0,1,2,3,4,5,6],"start_time":"06:00","duration_min":481,"lead_min":10}');
+  step := 'session over 8 hours refused'; status := r.status;
+  ok := r.status = 400; info := pg_temp.j(r.content) -> 'error' ->> 'message'; return next;
 
   r := pg_temp.call('PATCH', v_api || '/profile', v_jwt, '{"quiet_start":"22:30","speak_replies":false}');
   step := 'settings'; status := r.status; ok := r.status = 200 and pg_temp.j(r.content) ->> 'quiet_start' = '22:30:00';
