@@ -3,7 +3,8 @@
 -- Auth: Neon Auth (Managed Better Auth). The API functions verify the user's JWT
 -- against Neon Auth's JWKS, then run each request in one transaction that first sets
 -- request.jwt.claims. auth.user_id() (from Neon's pg_session_jwt) reads the `sub`
--- claim from there, so every policy below resolves to the signed-in user.
+-- claim from there; current_uid() wraps it, so every policy below resolves to the
+-- signed-in user.
 --
 -- The API connects as a login role that is a member of `authenticated` and has no
 -- BYPASSRLS (see roles.sql.example). The table owner is only used for migrations.
@@ -40,9 +41,16 @@ begin
 end $$;
 
 grant usage on schema public to authenticated, dispatcher;
-grant usage on schema auth to authenticated, dispatcher;
 
 -- ───────────────────────── helpers
+-- The signed-in user's id. pg_session_jwt's auth schema is owned by the platform and not
+-- usable by `authenticated`, so policies and defaults go through this owner-run wrapper.
+create or replace function current_uid() returns text
+language sql stable security definer set search_path = public, pg_temp
+as $$ select auth.user_id() $$;
+revoke all on function current_uid() from public;
+grant execute on function current_uid() to authenticated, dispatcher;
+
 create or replace function touch_updated_at() returns trigger
 language plpgsql as $$
 begin
@@ -52,7 +60,7 @@ end $$;
 
 -- ───────────────────────── profiles
 create table profiles (
-  user_id               text primary key default auth.user_id(),
+  user_id               text primary key default current_uid(),
   display_name          text not null default '' check (char_length(display_name) <= 80),
   timezone              text not null default 'Asia/Karachi',
   language              text not null default 'en' check (language in ('en', 'ur-Latn')),
@@ -74,7 +82,7 @@ create trigger profiles_touch before update on profiles
 -- ───────────────────────── goals and plan
 create table goals (
   id         uuid primary key default gen_random_uuid(),
-  user_id    text not null default auth.user_id(),
+  user_id    text not null default current_uid(),
   title      text not null check (char_length(title) between 3 and 80),
   why        text check (char_length(why) <= 500),
   deadline   date not null,
@@ -89,7 +97,7 @@ create trigger goals_touch before update on goals
 
 create table milestones (
   id       uuid primary key default gen_random_uuid(),
-  user_id  text not null default auth.user_id(),
+  user_id  text not null default current_uid(),
   goal_id  uuid not null,
   position int  not null check (position >= 0),
   title    text not null check (char_length(title) between 1 and 120),
@@ -100,7 +108,7 @@ create table milestones (
 
 create table schedule_rules (
   goal_id      uuid primary key,
-  user_id      text not null default auth.user_id(),
+  user_id      text not null default current_uid(),
   weekdays     smallint[] not null check (cardinality(weekdays) between 1 and 7
                                           and weekdays <@ array[0,1,2,3,4,5,6]::smallint[]),  -- 0=Sun..6=Sat
   start_time   time not null,
@@ -112,7 +120,7 @@ create table schedule_rules (
 -- ───────────────────────── commitments (fixed blocks the user adds: class, gym, work)
 create table commitments (
   id           uuid primary key default gen_random_uuid(),
-  user_id      text not null default auth.user_id(),
+  user_id      text not null default current_uid(),
   title        text not null check (char_length(title) between 1 and 80),
   weekdays     smallint[] not null default '{}' check (weekdays <@ array[0,1,2,3,4,5,6]::smallint[]),
   start_time   time not null,
@@ -132,7 +140,7 @@ create trigger commitments_touch before update on commitments
 -- Every concrete block on the calendar: generated sessions AND expanded commitment occurrences.
 create table calendar_blocks (
   id            uuid primary key default gen_random_uuid(),
-  user_id       text not null default auth.user_id(),
+  user_id       text not null default current_uid(),
   kind          text not null check (kind in ('session', 'commitment')),
   goal_id       uuid,
   commitment_id uuid,
@@ -187,7 +195,7 @@ create trigger commitments_sync_titles after update of title on commitments
 -- ───────────────────────── devices and notifications
 create table devices (
   id          uuid primary key default gen_random_uuid(),
-  user_id     text not null default auth.user_id(),
+  user_id     text not null default current_uid(),
   fcm_token   text not null unique check (char_length(fcm_token) between 20 and 4096),
   platform    text not null check (platform in ('ios', 'android')),
   updated_at  timestamptz not null default now()
@@ -214,7 +222,7 @@ create index notification_jobs_due on notification_jobs (due_at) where sent_at i
 -- ───────────────────────── assistant audit + undo
 create table assistant_runs (
   id            uuid primary key default gen_random_uuid(),
-  user_id       text not null default auth.user_id(),
+  user_id       text not null default current_uid(),
   transcript    text not null check (char_length(transcript) <= 2000),
   language      text,
   plan          jsonb not null,
@@ -241,8 +249,8 @@ begin
                            'calendar_blocks', 'devices', 'assistant_runs']
   loop
     execute format($p$create policy own_rows on %I for all to authenticated
-                      using (user_id = auth.user_id())
-                      with check (user_id = auth.user_id())$p$, t);
+                      using (user_id = (select current_uid()))
+                      with check (user_id = (select current_uid()))$p$, t);
     execute format('grant select, insert, update, delete on %I to authenticated', t);
   end loop;
 end $$;
@@ -250,5 +258,5 @@ end $$;
 -- Users may read (not write) their own push log; only the dispatcher's definer
 -- functions write it.
 create policy own_rows_read on notification_jobs for select to authenticated
-  using (user_id = auth.user_id());
+  using (user_id = (select current_uid()));
 grant select on notification_jobs to authenticated;

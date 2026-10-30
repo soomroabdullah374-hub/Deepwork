@@ -213,7 +213,7 @@ begin
   for r in select * from free_slots(90, now(), now() + interval '7 days', 40) loop
     n := n + 1;
     select count(*) into k from calendar_blocks b
-     where b.user_id = auth.user_id() and b.status not in ('cancelled', 'skipped')
+     where b.user_id = current_uid() and b.status not in ('cancelled', 'skipped')
        and b.period && tstzrange(r.starts_at, r.ends_at, '[)');
     assert k = 0, format('FAIL 10: free slot %s overlaps a block', r.starts_at);
     assert not in_quiet_hours(r.starts_at, r.ends_at, 'Asia/Karachi', '23:00', '07:00'),

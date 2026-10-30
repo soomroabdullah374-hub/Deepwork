@@ -1,8 +1,8 @@
 -- DeepWork — database functions. Safe to re-run (create or replace).
 --
 -- User-facing functions are SECURITY INVOKER, so RLS applies, and they also filter on
--- auth.user_id() explicitly. The few SECURITY DEFINER functions are listed at the end;
--- each one either acts only on auth.user_id() or is executable by the dispatcher only.
+-- current_uid() explicitly. The few SECURITY DEFINER functions are listed at the end;
+-- each one either acts only on current_uid() or is executable by the dispatcher only.
 
 -- ───────────────────────── types
 do $$
@@ -25,7 +25,7 @@ end $$;
 -- ───────────────────────── small helpers
 create or replace function require_user() returns text
 language plpgsql stable set search_path = public, pg_temp as $$
-declare v text := auth.user_id();
+declare v text := current_uid();
 begin
   if v is null or v = '' then
     raise exception 'not signed in' using errcode = '28000';
@@ -35,7 +35,7 @@ end $$;
 
 create or replace function my_tz() returns text
 language sql stable set search_path = public, pg_temp as $$
-  select coalesce((select timezone from profiles where user_id = auth.user_id()), 'Asia/Karachi')
+  select coalesce((select timezone from profiles where user_id = current_uid()), 'Asia/Karachi')
 $$;
 
 -- True when [p_start, p_end) touches the quiet window (which may wrap midnight).
@@ -58,7 +58,7 @@ returns table (id uuid, title text, kind text, starts_at timestamptz, ends_at ti
 language sql stable security invoker set search_path = public, pg_temp as $$
   select b.id, b.title, b.kind, lower(b.period), upper(b.period)
     from calendar_blocks b
-   where b.user_id = auth.user_id()
+   where b.user_id = current_uid()
      and b.status not in ('cancelled', 'skipped')
      and b.period && tstzrange(p_start, p_end, '[)')
      and (p_ignore is null or b.id <> p_ignore)
@@ -76,7 +76,7 @@ returns table (id uuid, title text, kind text, starts_at timestamptz, ends_at ti
 language sql stable security invoker set search_path = public, pg_temp as $$
   select b.id, b.title, b.kind, lower(b.period), upper(b.period)
     from calendar_blocks b
-   where b.user_id = auth.user_id()
+   where b.user_id = current_uid()
      and b.status not in ('cancelled', 'skipped')
      and b.period && tstzrange(p_start, p_end, '[)')
      and not (b.id = any (coalesce(p_ignore_ids, '{}')))
@@ -136,17 +136,22 @@ end $$;
 -- block for the same slot is left alone, even if it was moved, cancelled or done.
 -- A slot that would overlap something is skipped and returned as a conflict; nothing is
 -- ever double-booked (the no_overlap constraint is the final guard).
-create or replace function generate_blocks(p_days int default 14,
-                                           p_goal uuid default null,
-                                           p_commitment uuid default null,
-                                           p_now timestamptz default now())
+-- generate_blocks_for does the work for an explicit user so the nightly worker can run it
+-- without touching request.jwt.claims (pg_session_jwt forbids that in definer functions).
+-- Called as `authenticated` it is still bound by RLS, so it can only ever write the
+-- caller's own rows.
+create or replace function generate_blocks_for(p_uid text,
+                                               p_days int default 14,
+                                               p_goal uuid default null,
+                                               p_commitment uuid default null,
+                                               p_now timestamptz default now())
 returns setof gen_conflict
 language plpgsql volatile security invoker set search_path = public, pg_temp as $$
 declare
-  v_uid   text := require_user();
-  v_tz    text := my_tz();
+  v_uid   text := p_uid;
+  v_tz    text := coalesce((select timezone from profiles where user_id = p_uid), 'Asia/Karachi');
   v_now   timestamptz := p_now;
-  v_today date := (p_now at time zone my_tz())::date;
+  v_today date;
   r       record;
   d       date;
   s       timestamptz;
@@ -154,6 +159,11 @@ declare
   c       record;
   out     gen_conflict;
 begin
+  if v_uid is null or v_uid = '' then
+    raise exception 'not signed in' using errcode = '28000';
+  end if;
+  v_today := (p_now at time zone v_tz)::date;
+
   -- 1) Commitments first: they are fixed.
   if p_goal is null then
     for r in
@@ -234,6 +244,15 @@ begin
   end if;
 end $$;
 
+create or replace function generate_blocks(p_days int default 14,
+                                           p_goal uuid default null,
+                                           p_commitment uuid default null,
+                                           p_now timestamptz default now())
+returns setof gen_conflict
+language sql volatile security invoker set search_path = public, pg_temp as $$
+  select * from generate_blocks_for(require_user(), p_days, p_goal, p_commitment, p_now)
+$$;
+
 -- After a rule edit: drop only this goal's future, untouched generated sessions, then
 -- regenerate. Moved, done, skipped or cancelled sessions are kept.
 create or replace function regenerate_goal(p_goal uuid, p_days int default 14,
@@ -289,7 +308,7 @@ declare n int;
 begin
   update calendar_blocks
      set status = 'missed'
-   where user_id = auth.user_id() and kind = 'session'
+   where user_id = current_uid() and kind = 'session'
      and status in ('planned', 'snoozed') and upper(period) + interval '30 minutes' < now();
   get diagnostics n = row_count;
   return n;
@@ -303,7 +322,7 @@ language sql stable security invoker set search_path = public, pg_temp as $$
   with s as (
     select status, lower(period) as st
       from calendar_blocks
-     where user_id = auth.user_id() and kind = 'session'
+     where user_id = current_uid() and kind = 'session'
        and status in ('done', 'missed', 'skipped') and lower(period) <= now()
   ), w as (
     select status, st,
@@ -512,14 +531,14 @@ create or replace function export_my_data() returns jsonb
 language sql stable security invoker set search_path = public, pg_temp as $$
   select jsonb_build_object(
     'exported_at', now(),
-    'profile', (select to_jsonb(p) from profiles p where p.user_id = auth.user_id()),
-    'goals', (select coalesce(jsonb_agg(to_jsonb(g) order by g.created_at), '[]') from goals g where g.user_id = auth.user_id()),
-    'milestones', (select coalesce(jsonb_agg(to_jsonb(m) order by m.goal_id, m.position), '[]') from milestones m where m.user_id = auth.user_id()),
-    'schedule_rules', (select coalesce(jsonb_agg(to_jsonb(r)), '[]') from schedule_rules r where r.user_id = auth.user_id()),
-    'commitments', (select coalesce(jsonb_agg(to_jsonb(c) order by c.created_at), '[]') from commitments c where c.user_id = auth.user_id()),
-    'calendar_blocks', (select coalesce(jsonb_agg(to_jsonb(b) order by lower(b.period)), '[]') from calendar_blocks b where b.user_id = auth.user_id()),
-    'devices', (select coalesce(jsonb_agg(jsonb_build_object('platform', d.platform, 'updated_at', d.updated_at)), '[]') from devices d where d.user_id = auth.user_id()),
-    'assistant_runs', (select coalesce(jsonb_agg(to_jsonb(a) - 'undo_payload' order by a.created_at), '[]') from assistant_runs a where a.user_id = auth.user_id())
+    'profile', (select to_jsonb(p) from profiles p where p.user_id = current_uid()),
+    'goals', (select coalesce(jsonb_agg(to_jsonb(g) order by g.created_at), '[]') from goals g where g.user_id = current_uid()),
+    'milestones', (select coalesce(jsonb_agg(to_jsonb(m) order by m.goal_id, m.position), '[]') from milestones m where m.user_id = current_uid()),
+    'schedule_rules', (select coalesce(jsonb_agg(to_jsonb(r)), '[]') from schedule_rules r where r.user_id = current_uid()),
+    'commitments', (select coalesce(jsonb_agg(to_jsonb(c) order by c.created_at), '[]') from commitments c where c.user_id = current_uid()),
+    'calendar_blocks', (select coalesce(jsonb_agg(to_jsonb(b) order by lower(b.period)), '[]') from calendar_blocks b where b.user_id = current_uid()),
+    'devices', (select coalesce(jsonb_agg(jsonb_build_object('platform', d.platform, 'updated_at', d.updated_at)), '[]') from devices d where d.user_id = current_uid()),
+    'assistant_runs', (select coalesce(jsonb_agg(to_jsonb(a) - 'undo_payload' order by a.created_at), '[]') from assistant_runs a where a.user_id = current_uid())
   )
 $$;
 
@@ -574,12 +593,10 @@ language plpgsql volatile security definer set search_path = public, pg_temp as 
 declare p record; n int := 0; c int := 0; k int;
 begin
   for p in select user_id from profiles loop
-    perform set_config('request.jwt.claims', jsonb_build_object('sub', p.user_id)::text, true);
-    select count(*) into k from generate_blocks(14);
+    select count(*) into k from generate_blocks_for(p.user_id, 14);
     n := n + 1;
     c := c + k;
   end loop;
-  perform set_config('request.jwt.claims', '', true);
   return jsonb_build_object('users', n, 'conflicts', c);
 end $$;
 
