@@ -87,14 +87,17 @@ export class Db {
     }
     if (!res.ok) {
       const err = body as PgError | null;
-      // A Neon compute waking from scale-to-zero can turn away the first request. The
-      // token was already verified here and a 401/503 means nothing ran, so one quick
-      // retry is safe.
-      if (attempt === 1 && (res.status === 401 || res.status === 503)) {
+      // The very first query for a session (a waking compute, or a brand-new account) can
+      // be turned away before the database has taken the token in: a 401/503 from the
+      // Data API, or our own require_user() reporting "not signed in" (28000, sent as 403).
+      // The token was already verified here and nothing ran, so one short retry is safe.
+      const notYet = res.status === 401 || res.status === 503 || (res.status === 403 && err?.code === '28000');
+      if (attempt === 1 && notYet) {
         console.warn('data api retry', res.status, err?.code ?? '', err?.message ?? '');
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 700));
         return this.send<T>(path, init, 2);
       }
+      if (notYet) console.warn('data api refused twice', res.status, err?.code ?? '', err?.message ?? '');
       throw toHttpError(res.status, err);
     }
     return body as T;

@@ -30,7 +30,6 @@ create or replace function pg_temp.e2e()
 returns table (step text, status int, ok boolean, info text)
 language plpgsql as $$
 declare
-  v_auth   text := 'https://ep-long-hall-a1adbrls.neonauth.ap-southeast-1.aws.neon.tech/neondb/auth';
   v_api    text := 'https://kqlrbkgiedrkhzthbqxk.supabase.co/functions/v1/api';
   v_email  text := 'e2e-' || encode(extensions.gen_random_bytes(5), 'hex') || '@example.com';
   v_pw     text := encode(extensions.gen_random_bytes(18), 'hex');
@@ -45,28 +44,20 @@ declare
 begin
   perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '60000');
 
-  -- ── auth
-  r := extensions.http(('POST', v_auth || '/sign-up/email',
-         array[extensions.http_header('Origin', 'https://localhost')], 'application/json',
+  -- ── auth, through the API exactly as the app signs in
+  r := extensions.http(('POST', v_api || '/auth/sign-up', array[]::extensions.http_header[], 'application/json',
          jsonb_build_object('email', v_email, 'password', v_pw, 'name', 'E2E Tester')::text)::extensions.http_request);
-  select string_agg(split_part(h.value, ';', 1), '; ') into v_cookie
-    from unnest(r.headers) h where lower(h.field) = 'set-cookie';
-  step := 'auth sign-up'; status := r.status; ok := r.status = 200 and v_cookie is not null;
-  info := coalesce(pg_temp.j(r.content) -> 'user' ->> 'email', left(r.content, 160)); return next;
-
-  r := extensions.http(('GET', v_auth || '/get-session',
-         array[extensions.http_header('Origin', 'https://localhost'), extensions.http_header('Cookie', v_cookie)],
-         null, null)::extensions.http_request);
-  select h.value into v_jwt from unnest(r.headers) h where lower(h.field) = 'set-auth-jwt';
-  if v_jwt is null then
-    r := extensions.http(('GET', v_auth || '/token',
-           array[extensions.http_header('Origin', 'https://localhost'), extensions.http_header('Cookie', v_cookie)],
-           null, null)::extensions.http_request);
-    v_jwt := pg_temp.j(r.content) ->> 'token';
-  end if;
-  step := 'auth JWT'; status := r.status; ok := v_jwt is not null;
-  info := case when v_jwt is null then left(r.content, 160) else 'JWT issued' end; return next;
+  b := pg_temp.j(r.content);
+  v_cookie := b ->> 'session';
+  v_jwt := b ->> 'jwt';
+  step := 'auth sign-up'; status := r.status; ok := r.status = 201 and v_cookie is not null and v_jwt is not null;
+  info := coalesce(b -> 'user' ->> 'email', left(r.content, 160)); return next;
   if v_jwt is null then return; end if;
+
+  r := extensions.http(('POST', v_api || '/auth/token', array[]::extensions.http_header[], 'application/json',
+         jsonb_build_object('session', v_cookie)::text)::extensions.http_request);
+  step := 'auth refresh'; status := r.status; ok := r.status = 200 and pg_temp.j(r.content) ->> 'jwt' is not null;
+  info := case when ok then 'fresh JWT issued' else left(r.content, 160) end; return next;
 
   r := pg_temp.call('GET', v_api || '/state', 'not-a-token');
   step := 'reject bad token'; status := r.status; ok := r.status = 401; info := pg_temp.j(r.content) -> 'error' ->> 'code'; return next;
@@ -151,6 +142,13 @@ begin
   step := 'finish session'; status := r.status;
   ok := pg_temp.j(r.content) ->> 'status' = 'done' and (pg_temp.j(r.content) ->> 'minutes_done')::int = 25;
   info := format('%s, %s min', pg_temp.j(r.content) ->> 'status', pg_temp.j(r.content) ->> 'minutes_done'); return next;
+
+  r := pg_temp.call('POST', v_api || '/commitments/check', v_jwt,
+         jsonb_build_object('title', 'check', 'weekdays', jsonb_build_array(1, 3, 6), 'start_time', '20:00',
+                            'duration_min', 90, 'ignore_goal', v_goal));
+  step := 'rhythm check ignores its own sessions'; status := r.status;
+  ok := r.status = 200 and (pg_temp.j(r.content) ->> 'ok')::boolean;
+  info := left(r.content, 120); return next;
 
   r := pg_temp.call('PUT', v_api || '/goals/' || v_goal || '/rule', v_jwt,
          '{"weekdays":[1,2,4],"start_time":"15:00","duration_min":60,"lead_min":15}');
