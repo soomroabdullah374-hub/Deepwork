@@ -1,0 +1,127 @@
+name: Android APK
+
+on:
+  push:
+    branches: ['main', 'claude/**']
+    paths: ['app/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: app
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install
+        run: npm ci
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npx jest --ci
+
+      - name: Generate the native Android project
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Use a release keystore (only when the repository has one)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        if: env.KEYSTORE_BASE64 != ''
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+          cat >> android/gradle.properties <<PROPS
+          DEEPWORK_STORE_FILE=release.keystore
+          DEEPWORK_STORE_PASSWORD=$KEYSTORE_PASSWORD
+          DEEPWORK_KEY_ALIAS=$KEY_ALIAS
+          DEEPWORK_KEY_PASSWORD=$KEY_PASSWORD
+          PROPS
+          python3 - <<'PY'
+          import re, pathlib
+          p = pathlib.Path('android/app/build.gradle')
+          s = p.read_text()
+          s = s.replace("signingConfigs {", """signingConfigs {
+                  release {
+                      storeFile file(DEEPWORK_STORE_FILE)
+                      storePassword DEEPWORK_STORE_PASSWORD
+                      keyAlias DEEPWORK_KEY_ALIAS
+                      keyPassword DEEPWORK_KEY_PASSWORD
+                  }""", 1)
+          s = re.sub(r"(release \{[^}]*?)signingConfig signingConfigs\.debug", r"\1signingConfig signingConfigs.release", s, count=1, flags=re.S)
+          p.write_text(s)
+          PY
+
+      - name: Build the release APK
+        working-directory: app/android
+        run: ./gradlew assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+
+      - name: Make sure no secret ended up in the app
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          unzip -p "$APK" assets/index.android.bundle | strings > /tmp/bundle.txt
+          if grep -E "gsk_[A-Za-z0-9]{20}|xai-[A-Za-z0-9]{20}|sk_[a-f0-9]{30}|npg_[A-Za-z0-9]{8}|BEGIN PRIVATE KEY|service_role" /tmp/bundle.txt; then
+            echo "A secret was found in the JavaScript bundle" >&2
+            exit 1
+          fi
+          ls -la "$APK"
+
+      - name: Name the APK
+        id: apk
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          NAME="DeepWork-${VERSION}-build${{ github.run_number }}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "../$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          sha256sum "../$NAME"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.name }}
+          retention-days: 30
+
+      - name: Publish a release
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[apk]')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.apk.outputs.version }}-build${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: DeepWork ${{ steps.apk.outputs.version }} (build ${{ github.run_number }})
+          prerelease: false
+          files: ${{ steps.apk.outputs.name }}
+          body: |
+            Android APK for DeepWork, built from ${{ github.sha }}.
+
+            Install: download the APK on your phone, open it, and allow installs from this source when Android asks.
+            The backend (Supabase Edge Functions + Neon) is already live; the voice assistant needs its API keys in the Supabase Edge Function secrets.
