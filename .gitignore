@@ -6,6 +6,8 @@
 *.env
 .env.server
 **/google-services.json
+# The app's Firebase client config holds public identifiers (they ship inside every APK).
+!app/google-services.json
 **/GoogleService-Info.plist
 *.keystore
 !app/android/app/debug.keystore
@@ -14,6 +16,7 @@
 *.p12
 *.pem
 service-account*.json
+*firebase-adminsdk*.json
 
 # Node / Expo
 node_modules/

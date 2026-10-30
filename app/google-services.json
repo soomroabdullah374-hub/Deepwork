@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "271923817282",
+    "project_id": "goal-3dc20",
+    "storage_bucket": "goal-3dc20.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:271923817282:android:0d98b5e47dcdd98cfbf6db",
+        "android_client_info": {
+          "package_name": "com.deepwork.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDfKQ_9Dfo-moeuvaQgCV1tionQWEkIho0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
