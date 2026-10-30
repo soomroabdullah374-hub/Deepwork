@@ -247,7 +247,8 @@ export async function runVoiceCheck(phrases = VOICE_PHRASES) {
         reply_audio_kb: reply ? Math.round(reply.bytes.length / 1024) : 0, ms: Date.now() - t0,
       });
     } catch (err) {
-      results.push({ means: p.means, error: err instanceof Error ? err.message : String(err), ms: Date.now() - t0 });
+      const reason = (err as { extra?: { reason?: string } }).extra?.reason;
+      results.push({ means: p.means, error: err instanceof Error ? err.message : String(err), reason, ms: Date.now() - t0 });
     }
   }
   return results;

@@ -27,7 +27,13 @@ export async function speak(
     },
     30_000,
   );
-  if (res.status === 401) throw new HttpError(503, 'tts_auth', 'The ElevenLabs key was rejected.');
+  if (res.status === 401) {
+    // ElevenLabs says why: invalid_api_key, missing_permissions, detected_unusual_activity…
+    const why = (await res.json().catch(() => null)) as { detail?: { status?: string; message?: string } } | null;
+    const reason = why?.detail?.status ?? 'unauthorized';
+    console.error('elevenlabs rejected the key', reason, (why?.detail?.message ?? '').slice(0, 200));
+    throw new HttpError(503, 'tts_auth', 'The ElevenLabs key was rejected.', { reason });
+  }
   if (!res.ok) {
     console.error('elevenlabs failed', res.status, (await res.text()).slice(0, 300));
     throw new HttpError(502, 'tts_failed', 'Could not create the voice reply.');
