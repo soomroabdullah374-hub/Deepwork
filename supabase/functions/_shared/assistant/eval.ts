@@ -233,6 +233,8 @@ export interface VoicePhrase {
   audio_base64?: string;
   /** …or one of the recordings in this repository (supabase/tests/audio). */
   audio_url?: string;
+  /** Plan as for someone whose app language is Roman Urdu. */
+  roman_urdu?: boolean;
 }
 
 const FIXTURES = 'https://raw.githubusercontent.com/soomroabdullah374-hub/Deepwork/';
@@ -263,7 +265,7 @@ export async function runVoiceCheck(phrases: VoicePhrase[] = VOICE_PHRASES) {
     try {
       const audio = (await recording(p)) ?? (await speak(p.text ?? '', p.language)).bytes;
       const heard = await transcribe(audio, keyterms);
-      const { plan } = await planWithLlm(heard.text, EVAL_CONTEXT);
+      const { plan } = await planWithLlm(heard.text, { ...EVAL_CONTEXT, romanUrdu: p.roman_urdu });
       let reply_voice: string;
       try {
         reply_voice = plan.reply_tts ? `${Math.round((await speak(plan.reply_tts, plan.reply_language)).bytes.length / 1024)} KB` : 'none';

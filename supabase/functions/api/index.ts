@@ -743,7 +743,10 @@ route('POST', '/assistant/plan', async (ctx) => {
   } else {
     const result = await planWithLlm(
       text,
-      promptContext({ tz, now, goals: state.goals, commitments: state.commitments, blocks: state.blocks }),
+      promptContext({
+      tz, now, goals: state.goals, commitments: state.commitments, blocks: state.blocks,
+      romanUrdu: state.profile.language === 'ur-Latn',
+    }),
     );
     plan = result.plan;
     meta = { model: result.model, attempts: result.attempts };
@@ -791,7 +794,10 @@ route('POST', '/assistant/answer', async (ctx) => {
       ? `"${card.summary}" clashes with ${card.clash?.title ?? 'something'}. Instead: ${answer}\n`
       : `About "${card.question ?? card.summary}": ${answer}\n`) +
       'Return the plan with ONLY the action(s) that this answer settles. Do not repeat the other changes.',
-    promptContext({ tz, now, goals: state.goals, commitments: state.commitments, blocks: state.blocks }),
+    promptContext({
+      tz, now, goals: state.goals, commitments: state.commitments, blocks: state.blocks,
+      romanUrdu: state.profile.language === 'ur-Latn',
+    }),
     [
       { role: 'user', content: run.transcript },
       { role: 'assistant', content: JSON.stringify({ ...original, actions: original.actions }) },

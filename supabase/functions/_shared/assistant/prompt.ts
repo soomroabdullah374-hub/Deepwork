@@ -60,7 +60,15 @@ export interface PromptContext {
   sessions: unknown[];
   commitments: unknown[];
   calendar: string; // "Sun 2026-10-25 (today), Mon 2026-10-26 (tomorrow), ..."
+  /** Their app language is Roman Urdu: Urdu replies are written in Roman letters. */
+  romanUrdu?: boolean;
 }
+
+// Added after the prompt for people whose app language is Roman Urdu: speech arrives in
+// Urdu script, but they read Urdu in Roman letters.
+export const ROMAN_URDU_NOTE = `
+READER
+- This person reads Urdu in Roman letters (their app setting). Whenever they write or speak Urdu, in either script, set reply_language "ur-Latn", write reply_text (and any clarify question and options) in Roman Urdu, and write reply_tts in Urdu script.`;
 
 export function buildSystemPrompt(ctx: PromptContext): string {
   return (
@@ -70,7 +78,8 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       .replace('{{goals_json}}', JSON.stringify(ctx.goals))
       .replace('{{sessions_json}}', JSON.stringify(ctx.sessions))
       .replace('{{commitments_json}}', JSON.stringify(ctx.commitments)) +
-    FIELD_NOTES.replace('{{calendar}}', ctx.calendar)
+    FIELD_NOTES.replace('{{calendar}}', ctx.calendar) +
+    (ctx.romanUrdu ? ROMAN_URDU_NOTE : '')
   );
 }
 

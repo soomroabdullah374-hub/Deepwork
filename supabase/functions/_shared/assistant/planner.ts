@@ -50,6 +50,7 @@ export interface ContextInput {
   goals: Goal[];
   commitments: Commitment[];
   blocks: Block[];
+  romanUrdu?: boolean;
 }
 
 /** The CONTEXT block of the system prompt, in the user's local time. */
@@ -113,6 +114,7 @@ export function promptContext(input: ContextInput): PromptContext {
     sessions,
     commitments,
     calendar: calendarLine(today),
+    romanUrdu: input.romanUrdu,
   };
 }
 
