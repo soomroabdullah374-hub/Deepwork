@@ -1,0 +1,32 @@
+# Secrets never go in this repo (it is public). Server keys live in Supabase only.
+.env
+.env.*
+!.env.example
+!.env.app.example
+*.env
+.env.server
+**/google-services.json
+**/GoogleService-Info.plist
+*.keystore
+!app/android/app/debug.keystore
+*.jks
+*.p8
+*.p12
+*.pem
+service-account*.json
+
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
+app/android/
+app/ios/
+*.tsbuildinfo
+coverage/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.log

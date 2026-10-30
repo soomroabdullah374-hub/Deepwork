@@ -1,0 +1,12 @@
+-- Login roles for the API and the cron dispatcher. Run once as the database owner,
+-- with real random passwords (never commit them). Their connection strings go into the
+-- Supabase project's secrets only (NEON_DATABASE_URL_API / NEON_DATABASE_URL_DISPATCHER).
+--
+-- Both roles are plain members of the NOLOGIN roles created in schema.sql. Neither has
+-- BYPASSRLS, so every query they run is checked by the policies.
+
+create role deepwork_api login password '<random-48-hex-chars>' in role authenticated;
+create role deepwork_worker login password '<random-48-hex-chars>' in role dispatcher;
+
+-- Sequences used by default ids (bigserial on notification_jobs is written only by the
+-- dispatcher's SECURITY DEFINER functions, which run as the owner).
