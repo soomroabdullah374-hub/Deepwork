@@ -2,6 +2,7 @@
 // token once and retries.
 
 import { File } from 'expo-file-system';
+import { Platform } from 'react-native';
 import { getToken } from './auth';
 import { ApiError, call, type CallOptions } from './http';
 import type {
@@ -116,7 +117,10 @@ export const api = {
 
   /** Sends the recording itself as the body (the server also takes multipart). */
   transcribe: async (fileUri: string, mime = 'audio/mp4') => {
-    const bytes = new Uint8Array(await new File(fileUri).arrayBuffer());
+    // a file on the phone; in a browser the recording is a blob: URL
+    const bytes = new Uint8Array(
+      Platform.OS === 'web' ? await (await fetch(fileUri)).arrayBuffer() : await new File(fileUri).arrayBuffer(),
+    );
     return await authed<Transcript>('POST', '/assistant/transcribe', { raw: { bytes, type: mime }, timeoutMs: 90_000 });
   },
 

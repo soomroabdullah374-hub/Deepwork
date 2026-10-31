@@ -71,6 +71,17 @@ the ElevenLabs voice back without any change to the app.
 that is first heard as low-confidence English is transcribed again as Urdu. When the app
 language is Roman Urdu, replies are written in Roman Urdu and spoken from Urdu script.
 
+**Voice conversation.** Started by voice, the assistant keeps talking with you: it stops
+recording when you pause, speaks its reply, and listens again for the answer to its
+question, another time for a clash, or "yes" / "no" to save ("haan", "theek hai kar do",
+"nahi rehne do" and Urdu script work too), then "anything else?" until you say no or tap ✕.
+Any tap takes over from the voice, and nothing is saved without a yes or a tap on Apply.
+
+**Typing.** Lengths and times can be typed as well as picked: "1h 40m", "dedh ghanta",
+"8:30 pm", "raat 8 baje", "saade 8". Sessions last 10 minutes to 8 hours and commitments 5
+minutes to 24 hours; an end time sets the length, and overnight ends say "next day". A
+goal can start on a later day: its sessions run from that day to the deadline.
+
 ## Reminders and push
 
 The dispatcher (pg_cron, every minute) marks missed sessions, keeps the 14-day horizon

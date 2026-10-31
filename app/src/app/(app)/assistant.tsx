@@ -1,34 +1,44 @@
-// [20] Listening · [21] Review changes · [22] Saved with undo.
+// [20] Listening · [21] Review changes · [22] Saved with undo — as a live conversation.
 // Speech → AssemblyAI → plan (LLM) → every action checked → you apply → 10 s undo.
+// In voice mode the assistant speaks its reply and listens again on its own: you answer
+// its questions, give another time for a clash, and say "yes" to save or "no" to leave
+// it. Recording ends when you pause. Any tap takes over from the voice.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
 import Animated, { FadeIn, useAnimatedProps, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { api } from '@/lib/api';
-import { speakReply, stopReply } from '@/lib/voiceReply';
 import { showBanner } from '@/lib/banner';
+import { joinLines, type Line, line, type Listen, nextTurn, type ReplyLanguage, shortAnswer } from '@/lib/conversation';
 import { ApiError, errorMessage } from '@/lib/http';
 import { useDraw, usePulse, useRise } from '@/lib/motion';
 import { STATE_KEY, useLoadedState } from '@/lib/queries';
 import { DarkTheme, fonts, palette, radius, screenPadding, useTheme } from '@/lib/theme';
-import type { AssistantAction, AssistantPlan } from '@/lib/types';
-import { useVoice } from '@/lib/voice';
+import type { AssistantAction, AssistantPlan, Transcript } from '@/lib/types';
+import { type AutoStop, useVoice } from '@/lib/voice';
+import { speakReply, stopReply } from '@/lib/voiceReply';
 import { Button, Chip, DeepWorkMark, Icon, type IconName, IconButton, T, TopBar, UndoToast } from '@/ui';
 
 type Phase = 'listening' | 'thinking' | 'review' | 'saved';
+/** What the voice is doing on the Review and Saved screens. */
+type Turn = 'idle' | 'speaking' | 'listening' | 'thinking';
+type Voice = ReturnType<typeof useVoice>;
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const MUTATING = ['add_commitment', 'add_session', 'move_session', 'cancel_session', 'delete_commitment', 'update_rule'];
 const dk = palette.dark;
+const INK = '#30302E';
+const IVORY = '#FAF9F5';
+const KILN = '#D97757';
 
 // ───────────────────────── listening
-function Bars({ level, active }: { level: number; active: boolean }) {
-  const [history, setHistory] = useState<number[]>(() => Array(14).fill(0.15));
+function Bars({ level, active, count = 14, height = 44, color = dk.mark }: { level: number; active: boolean; count?: number; height?: number; color?: string }) {
+  const [history, setHistory] = useState<number[]>(() => Array(count).fill(0.15));
   const levelRef = useRef(level);
   levelRef.current = level;
   useEffect(() => {
@@ -39,9 +49,9 @@ function Bars({ level, active }: { level: number; active: boolean }) {
     return () => clearInterval(t);
   }, [active]);
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, height: 44 }} accessibilityElementsHidden>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: height > 30 ? 5 : 3, height }} accessibilityElementsHidden>
       {history.map((v, i) => (
-        <View key={i} style={{ width: 4, height: 6 + v * 38, borderRadius: 2, backgroundColor: dk.mark, opacity: active ? 1 : 0.4 }} />
+        <View key={i} style={{ width: height > 30 ? 4 : 3, height: 4 + v * (height - 6), borderRadius: 2, backgroundColor: color, opacity: active ? 1 : 0.4 }} />
       ))}
     </View>
   );
@@ -60,48 +70,43 @@ function Blink() {
 }
 
 function Listening({
+  voice,
+  typing,
+  onTyping,
+  error,
+  onStart,
+  onStop,
   onText,
-  typingFirst,
   credit,
-  initialError,
 }: {
-  onText: (text: string, meta: { confidence?: number | null; language?: string | null }) => void;
-  typingFirst: boolean;
+  voice: Voice;
+  typing: boolean;
+  onTyping: (typing: boolean) => void;
+  error: string | null;
+  /** Start recording a request (also on arrival). */
+  onStart: () => void;
+  /** The stop button: send what was said now. */
+  onStop: () => void;
+  onText: (text: string) => void;
   credit: string;
-  initialError?: string | null;
 }) {
   const insets = useSafeAreaInsets();
-  const [typing, setTyping] = useState(typingFirst);
   const [draft, setDraft] = useState('');
-  const [error, setError] = useState<string | null>(initialError ?? null);
-  const finish = useCallback(
-    (t: { text: string; confidence: number | null; language: string | null } | null) => {
-      if (t?.text) onText(t.text, { confidence: t.confidence, language: t.language });
-      else setError("I didn't catch anything. Try again, or type it.");
-    },
-    [onText],
-  );
-  const voice = useVoice(finish);
 
   useEffect(() => {
     if (typing) return;
-    voice.start().catch((err) => {
-      setError(errorMessage(err));
-      setTyping(true);
-    });
+    onStart();
     return () => {
       voice.cancel();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [typing]);
 
-  const stop = async () => {
+  const recording = voice.phase === 'recording';
+  const press = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-    try {
-      finish(await voice.stop());
-    } catch (err) {
-      setError(errorMessage(err));
-    }
+    if (recording) onStop();
+    else if (voice.phase === 'idle') onStart();
   };
 
   return (
@@ -110,25 +115,18 @@ function Listening({
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <IconButton icon="x" label="Close" tone="dark" onPress={() => router.back()} />
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#1F1E1D', borderRadius: 999, paddingHorizontal: 14, minHeight: 34 }}>
-            {voice.phase === 'recording' ? <Blink /> : null}
+            {recording ? <Blink /> : null}
             <T variant="label" color={dk.text}>
-              {typing ? 'Type it' : voice.phase === 'transcribing' ? 'Writing it down' : 'Listening'}
+              {typing ? 'Type it' : voice.phase === 'transcribing' ? 'Writing it down' : recording ? 'Listening' : 'Voice'}
             </T>
           </View>
-          <IconButton
-            icon={typing ? 'mic' : 'keyboard'}
-            label={typing ? 'Speak instead' : 'Type instead'}
-            tone="dark"
-            onPress={() => {
-              setError(null);
-              if (!typing) voice.cancel();
-              setTyping(!typing);
-            }}
-          />
+          <IconButton icon={typing ? 'mic' : 'keyboard'} label={typing ? 'Speak instead' : 'Type instead'} tone="dark" onPress={() => onTyping(!typing)} />
         </View>
 
         <T variant="body" color={dk.textSecondary} style={{ marginTop: 56 }}>
-          Tell me what changed in your week. I'll check everything for clashes before anything is saved.
+          {typing
+            ? "Tell me what changed in your week. I'll check everything for clashes before anything is saved."
+            : "Tell me what changed in your week, and pause when you're done. I'll ask if anything is unclear, and nothing is saved until you say yes."}
         </T>
 
         {typing ? (
@@ -142,35 +140,35 @@ function Listening({
               autoFocus
               style={{ color: dk.text, fontFamily: fonts.display, fontSize: 28, lineHeight: 36, flex: 1, textAlignVertical: 'top' }}
             />
-            <Button label="Check my week" iconRight="arrowRight" disabled={!draft.trim()} onPress={() => onText(draft.trim(), {})} />
+            <Button label="Check my week" iconRight="arrowRight" disabled={!draft.trim()} onPress={() => onText(draft.trim())} />
           </View>
         ) : (
           <View style={{ flex: 1, justifyContent: 'space-between', marginTop: 20 }}>
-            <T style={{ fontFamily: fonts.display, fontSize: 30, lineHeight: 40, color: voice.phase === 'recording' ? dk.textMuted : dk.text }}>
-              {voice.phase === 'transcribing' ? 'Writing it down…' : voice.phase === 'recording' ? 'Go ahead, I’m listening' : ''}
-              {voice.phase === 'recording' ? <T style={{ color: dk.mark, fontFamily: fonts.display, fontSize: 30 }}>|</T> : null}
+            <T style={{ fontFamily: fonts.display, fontSize: 30, lineHeight: 40, color: recording ? dk.textMuted : dk.text }}>
+              {voice.phase === 'transcribing' ? 'Writing it down…' : recording ? 'Go ahead, I’m listening' : ''}
+              {recording ? <T style={{ color: dk.mark, fontFamily: fonts.display, fontSize: 30 }}>|</T> : null}
             </T>
             <View style={{ alignItems: 'center', gap: 18 }}>
-              <Bars level={voice.level} active={voice.phase === 'recording'} />
+              <Bars level={voice.level} active={recording} />
               <View style={{ width: 120, height: 120, alignItems: 'center', justifyContent: 'center' }}>
-                {voice.phase === 'recording' ? (
+                {recording ? (
                   <>
                     <PulseRing delay={0} />
                     <PulseRing delay={600} />
                   </>
                 ) : null}
                 <Pressable
-                  onPress={stop}
-                  disabled={voice.phase !== 'recording'}
+                  onPress={press}
+                  disabled={voice.phase === 'transcribing'}
                   accessibilityRole="button"
-                  accessibilityLabel="Stop and check"
+                  accessibilityLabel={recording ? 'Done, check it now' : 'Talk'}
                   style={{ width: 88, height: 88, borderRadius: 44, backgroundColor: dk.mark, alignItems: 'center', justifyContent: 'center' }}
                 >
-                  <Icon name="stop" size={28} color="#FAF9F5" />
+                  <Icon name={recording ? 'stop' : 'mic'} size={28} color={IVORY} />
                 </Pressable>
               </View>
               <T variant="label" color={dk.text}>
-                {voice.phase === 'recording' ? "Tap when you're done" : voice.phase === 'transcribing' ? 'One moment…' : ' '}
+                {recording ? 'I’ll check it when you pause' : voice.phase === 'transcribing' ? 'One moment…' : 'Tap to talk'}
               </T>
             </View>
           </View>
@@ -185,6 +183,49 @@ function Listening({
         </T>
       </View>
     </KeyboardAvoidingView>
+  );
+}
+
+// ───────────────────────── the voice, on Review and Saved
+interface VoiceControls {
+  /** Voice mode: it listens again after speaking. */
+  live: boolean;
+  onSkip: () => void;
+  onSendNow: () => void;
+  onEnd: () => void;
+}
+
+function VoiceBar({ turn, level, live, onSkip, onSendNow, onEnd }: { turn: Turn; level: number } & VoiceControls) {
+  if (turn === 'idle') return null;
+  const label = turn === 'listening' ? 'Listening…' : turn === 'speaking' ? 'Speaking…' : 'Checking…';
+  const hint = turn === 'listening' ? 'Pause when you’re done' : turn === 'speaking' && live ? 'Then I’ll listen' : null;
+  return (
+    <Animated.View
+      entering={FadeIn.duration(180)}
+      accessibilityLiveRegion="polite"
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 60, borderRadius: 999, backgroundColor: INK, paddingLeft: 20, paddingRight: 8 }}
+    >
+      {turn === 'listening' ? (
+        <Bars level={level} active count={7} height={26} color={KILN} />
+      ) : turn === 'speaking' ? (
+        <Icon name="speaker" size={20} color={KILN} />
+      ) : (
+        <ActivityIndicator color={KILN} />
+      )}
+      <View style={{ flex: 1 }}>
+        <T variant="label" color={IVORY}>
+          {label}
+        </T>
+        {hint ? (
+          <T variant="caption" color="#B0AEA5">
+            {hint}
+          </T>
+        ) : null}
+      </View>
+      {turn === 'listening' ? <IconButton icon="check" label="Done, check it now" tone="kiln" size={44} onPress={onSendNow} /> : null}
+      {turn === 'speaking' ? <IconButton icon="mic" label="Talk now" tone="kiln" size={44} onPress={onSkip} /> : null}
+      <IconButton icon="x" label="Stop the voice conversation" tone="dark" size={44} onPress={onEnd} />
+    </Animated.View>
   );
 }
 
@@ -298,15 +339,23 @@ function ActionCard({ a, index, onAnswer, busy }: { a: AssistantAction; index: n
 function Review({
   plan,
   busy,
+  turn,
+  level,
   onAnswer,
   onApply,
   onBack,
+  onTalk,
+  voiceBar,
 }: {
   plan: AssistantPlan;
   busy: 'answer' | 'apply' | null;
+  turn: Turn;
+  level: number;
   onAnswer: (index: number, answer: string) => void;
   onApply: () => void;
   onBack: () => void;
+  onTalk: () => void;
+  voiceBar: VoiceControls;
 }) {
   const { c } = useTheme();
   const insets = useSafeAreaInsets();
@@ -338,18 +387,25 @@ function Review({
           ))}
       </ScrollView>
       <View style={{ paddingHorizontal: screenPadding, paddingBottom: insets.bottom + 12, gap: 8 }}>
-        {onlyInfo ? (
-          <Button label="Done" onPress={() => router.back()} />
-        ) : (
-          <Button
-            label={busy === 'answer' ? 'Checking…' : ok === 0 ? 'Nothing to apply yet' : all && ok > 1 ? `Apply all ${ok} changes` : `Apply ${ok} change${ok === 1 ? '' : 's'}`}
-            disabled={ok === 0 || busy !== null}
-            loading={busy === 'apply'}
-            onPress={onApply}
-          />
-        )}
+        <VoiceBar turn={turn} level={level} {...voiceBar} />
+        <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+          {turn === 'idle' ? <IconButton icon="mic" label="Answer by voice" tone="kiln" size={52} onPress={onTalk} /> : null}
+          {onlyInfo ? (
+            <Button label="Done" onPress={() => router.back()} style={{ flex: 1 }} />
+          ) : (
+            <Button
+              label={busy === 'answer' ? 'Checking…' : ok === 0 ? 'Nothing to apply yet' : all && ok > 1 ? `Apply all ${ok} changes` : `Apply ${ok} change${ok === 1 ? '' : 's'}`}
+              disabled={ok === 0 || busy !== null}
+              loading={busy === 'apply'}
+              onPress={onApply}
+              style={{ flex: 1 }}
+            />
+          )}
+        </View>
         <T variant="caption" tone="secondary" align="center">
-          Nothing is saved until you tap Apply. Undo for 10 seconds after.
+          {turn !== 'idle' && voiceBar.live && !onlyInfo
+            ? 'Say “yes” or tap Apply to save. Undo for 10 seconds after.'
+            : 'Nothing is saved until you tap Apply. Undo for 10 seconds after.'}
         </T>
       </View>
     </View>
@@ -381,14 +437,22 @@ function Saved({
   plan,
   appliedIndexes,
   undoUntil,
+  turn,
+  level,
   onUndo,
   onNext,
+  onTalk,
+  voiceBar,
 }: {
   plan: AssistantPlan;
   appliedIndexes: number[];
   undoUntil: number;
+  turn: Turn;
+  level: number;
   onUndo: () => void;
-  onNext: (text: string | null) => void;
+  onNext: (text: string) => void;
+  onTalk: () => void;
+  voiceBar: VoiceControls;
 }) {
   const { c } = useTheme();
   const insets = useSafeAreaInsets();
@@ -434,23 +498,36 @@ function Saved({
             onDone={() => setShowUndo(false)}
           />
         ) : null}
-        <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
-          <TextInput
-            value={text}
-            onChangeText={setText}
-            placeholder="Type a change, or hold the mic"
-            placeholderTextColor={c.textMuted}
-            onSubmitEditing={() => text.trim() && onNext(text.trim())}
-            style={{ flex: 1, minHeight: 52, borderRadius: radius.input, borderWidth: 1, borderColor: c.line, backgroundColor: c.surface, paddingHorizontal: 16, color: c.text, fontFamily: fonts.ui, fontSize: 15 }}
-          />
-          <IconButton icon={text.trim() ? 'arrowRight' : 'mic'} label={text.trim() ? 'Send' : 'Speak'} tone="kiln" size={52} onPress={() => onNext(text.trim() || null)} />
-        </View>
+        {turn !== 'idle' ? (
+          <VoiceBar turn={turn} level={level} {...voiceBar} />
+        ) : (
+          <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+            <TextInput
+              value={text}
+              onChangeText={setText}
+              placeholder="Type a change, or tap the mic"
+              placeholderTextColor={c.textMuted}
+              onSubmitEditing={() => text.trim() && onNext(text.trim())}
+              style={{ flex: 1, minHeight: 52, borderRadius: radius.input, borderWidth: 1, borderColor: c.line, backgroundColor: c.surface, paddingHorizontal: 16, color: c.text, fontFamily: fonts.ui, fontSize: 15 }}
+            />
+            <IconButton
+              icon={text.trim() ? 'arrowRight' : 'mic'}
+              label={text.trim() ? 'Send' : 'Talk'}
+              tone="kiln"
+              size={52}
+              onPress={() => (text.trim() ? onNext(text.trim()) : onTalk())}
+            />
+          </View>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 // ───────────────────────── screen
+const replyLine = (p: AssistantPlan): Line => ({ text: p.reply_text, tts: p.reply_tts || p.reply_text });
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function Assistant() {
   const state = useLoadedState();
   const qc = useQueryClient();
@@ -460,18 +537,137 @@ export default function Assistant() {
   const [busy, setBusy] = useState<'answer' | 'apply' | null>(null);
   const [applied, setApplied] = useState<{ indexes: number[]; until: number } | null>(null);
   const [listenKey, setListenKey] = useState(0);
-  const [startTyping, setStartTyping] = useState(false);
+  const [typing, setTyping] = useState(false);
   const [listenError, setListenError] = useState<string | null>(null);
-  useEffect(() => stopReply, []);
+  const [turn, setTurn] = useState<Turn>('idle');
+  const [liveOn, setLiveOn] = useState(true);
+  // Voice mode: after each reply, listen again on its own.
+  const live = useRef(true);
+  // Every step bumps this; a step that finds it changed was overtaken (by a tap) and stops.
+  const turnId = useRef(0);
+  // The step the current recording belongs to, and what its words are for.
+  const listening = useRef<number | null>(null);
+  const listenFor = useRef<Listen>({ kind: 'request' });
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const planRef = useRef(plan);
+  planRef.current = plan;
+  const voice = useVoice({ endOnPause: true, onAutoStop: (t, why, error) => heard(t, why, error) });
 
-  // The ElevenLabs voice when the server has it, else the phone's own voice.
-  const speak = (p: AssistantPlan) => {
-    if (!state.profile.speak_replies || !(p.reply_tts || p.reply_text)) return;
-    speakReply({ text: p.reply_text, tts: p.reply_tts, language: p.reply_language }).catch(() => undefined);
+  useEffect(
+    () => () => {
+      turnId.current += 1;
+      stopReply();
+    },
+    [],
+  );
+
+  const sttOff = health.data?.speech_to_text.configured === false;
+  // while the clip uploads, the bar says so
+  const shownTurn: Turn = turn === 'listening' && voice.phase === 'transcribing' ? 'thinking' : turn;
+  const lang: ReplyLanguage = plan?.reply_language ?? (state.profile.language === 'ur-Latn' ? 'ur-Latn' : 'en');
+
+  const setLive = (on: boolean) => {
+    live.current = on;
+    setLiveOn(on);
+  };
+
+  /** A tap takes over: stop talking and listening. */
+  const interrupt = () => {
+    turnId.current += 1;
+    listening.current = null;
+    stopReply();
+    voice.cancel();
+    setTurn('idle');
+  };
+
+  const listenNow = async (next: Listen, id = ++turnId.current) => {
+    listenFor.current = next;
+    try {
+      await voice.start();
+      if (id !== turnId.current) {
+        voice.cancel();
+        return;
+      }
+      listening.current = id;
+      setTurn('listening');
+    } catch (err) {
+      setLive(false);
+      setTurn('idle');
+      if (phaseRef.current === 'listening') {
+        setListenError(errorMessage(err));
+        setTyping(true);
+      } else {
+        showBanner(errorMessage(err), 'danger');
+      }
+    }
+  };
+
+  /** Say `say` (when replies are spoken), then in voice mode listen for `next`. */
+  const converse = async (say: Line | null, language: ReplyLanguage, next: Listen | null) => {
+    const id = ++turnId.current;
+    listening.current = null;
+    await voice.cancel();
+    if (say?.text && state.profile.speak_replies) {
+      setTurn('speaking');
+      await speakReply({ text: say.text, tts: say.tts, language }).catch(() => undefined);
+      if (id !== turnId.current) return;
+    }
+    if (!live.current || !next) {
+      setTurn('idle');
+      return;
+    }
+    await pause(400); // let the speaker go quiet before the mic opens
+    if (id !== turnId.current) return;
+    await listenNow(next, id);
+  };
+
+  /** What was said (from a pause, the time limit, or the Done button). */
+  const heard = (t: Transcript | null, why: AutoStop | 'tap', error?: unknown) => {
+    const id = listening.current;
+    if (id === null || id !== turnId.current) return; // a tap took over meanwhile
+    listening.current = null;
+    setTurn('idle');
+    if (error) {
+      // the clip didn't reach the server or couldn't be read: say why
+      if (phaseRef.current === 'listening') setListenError(errorMessage(error));
+      else {
+        setLive(false);
+        showBanner(errorMessage(error), 'danger');
+      }
+      return;
+    }
+    const text = t?.text?.trim();
+    if (!text) {
+      if (phaseRef.current === 'listening') {
+        setListenError(why === 'quiet' ? 'I didn’t hear anything. Tap the mic and try again, or type it.' : 'I didn’t catch that. Tap the mic and try again, or type it.');
+      } else {
+        setLive(false); // nothing said: the voice rests until you tap the mic
+      }
+      return;
+    }
+    const meta = { confidence: t?.confidence ?? null, language: t?.language ?? null };
+    const target = listenFor.current;
+    const language = planRef.current?.reply_language ?? lang;
+    if (target.kind === 'request') return void ask(text, meta);
+    if (target.kind === 'answer') return void answer(target.index, text);
+    const short = shortAnswer(text);
+    if (target.kind === 'confirm') {
+      if (short === 'yes') return void apply();
+      if (short === 'no') return void converse(joinLines(line('notSaved', language), line('more', language)), language, { kind: 'more' });
+      return void ask(text, meta);
+    }
+    if (short === 'no' || short === 'enough') {
+      setLive(false);
+      return void converse(line('bye', language), language, null);
+    }
+    if (short === 'yes') return void converse(line('goAhead', language), language, { kind: 'request' });
+    void ask(text, meta);
   };
 
   const handlePlan = async (p: AssistantPlan) => {
     setPlan(p);
+    planRef.current = p;
     await qc.invalidateQueries({ queryKey: STATE_KEY });
     if (p.auto_applied && p.applied) {
       setApplied({ indexes: p.applied.applied.map((x) => x.index), until: new Date(p.applied.undo_until).getTime() });
@@ -479,46 +675,68 @@ export default function Assistant() {
     } else {
       setPhase('review');
     }
-    speak(p);
+    const t = nextTurn(p, MUTATING);
+    void converse(live.current ? t.say : replyLine(p), p.reply_language, t.listen);
   };
 
   const ask = async (text: string, meta: { confidence?: number | null; language?: string | null }) => {
+    interrupt();
     setPhase('thinking');
     try {
       await handlePlan(await api.plan(text, meta));
     } catch (err) {
       setListenError(err instanceof ApiError && err.code === 'ai_not_configured' ? 'The assistant isn’t set up on the server yet (its AI key is missing).' : errorMessage(err));
-      setStartTyping(true);
+      setLive(false);
+      setTyping(true);
       setListenKey((k) => k + 1);
       setPhase('listening');
     }
   };
 
   const answer = async (index: number, value: string) => {
-    if (!plan) return;
+    const current = planRef.current;
+    if (!current) return;
+    interrupt();
     setBusy('answer');
+    if (live.current) setTurn('thinking');
     try {
-      const next = await api.answer(plan.run_id, index, value);
+      const next = await api.answer(current.run_id, index, value);
       setPlan(next);
+      planRef.current = next;
+      if (live.current) {
+        const t = nextTurn(next, MUTATING);
+        void converse(t.say, next.reply_language, t.listen);
+      } else {
+        setTurn('idle');
+      }
     } catch (err) {
       showBanner(errorMessage(err), 'danger');
+      setLive(false);
+      setTurn('idle');
     } finally {
       setBusy(null);
     }
   };
 
   const apply = async () => {
-    if (!plan) return;
-    const indexes = plan.actions.filter((a) => a.status === 'ok' && MUTATING.includes(a.type)).map((a) => a.index);
+    const current = planRef.current;
+    if (!current) return;
+    interrupt();
+    const indexes = current.actions.filter((a) => a.status === 'ok' && MUTATING.includes(a.type)).map((a) => a.index);
     setBusy('apply');
+    if (live.current) setTurn('thinking');
     try {
-      const r = await api.apply(plan.run_id, indexes);
+      const r = await api.apply(current.run_id, indexes);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       setApplied({ indexes: r.applied.map((x) => x.index), until: new Date(r.undo_until).getTime() });
       await qc.invalidateQueries({ queryKey: STATE_KEY });
       setPhase('saved');
+      if (live.current) void converse(joinLines(line('done', current.reply_language), line('more', current.reply_language)), current.reply_language, { kind: 'more' });
+      else setTurn('idle');
     } catch (err) {
       showBanner(err instanceof ApiError && err.code === 'clash' ? 'Something changed meanwhile and a time is taken now. Nothing was saved.' : errorMessage(err), 'danger');
+      setLive(false);
+      setTurn('idle');
     } finally {
       setBusy(null);
     }
@@ -526,6 +744,7 @@ export default function Assistant() {
 
   const undo = async () => {
     if (!plan) return;
+    interrupt();
     try {
       await api.undo(plan.run_id);
       await qc.invalidateQueries({ queryKey: STATE_KEY });
@@ -533,6 +752,33 @@ export default function Assistant() {
     } catch (err) {
       showBanner(errorMessage(err), 'danger');
     }
+  };
+
+  /** The mic on Review or Saved: voice mode on, listening for what this screen needs. */
+  const talk = () => {
+    setLive(true);
+    const p = planRef.current;
+    void converse(null, lang, phase === 'review' && p ? nextTurn(p, MUTATING).listen : { kind: 'request' });
+  };
+
+  const voiceBar: VoiceControls = {
+    live: liveOn,
+    onSkip: () => {
+      // end the reply and listen now
+      setLive(true);
+      stopReply();
+    },
+    onSendNow: async () => {
+      try {
+        heard(await voice.stop(), 'tap');
+      } catch (err) {
+        heard(null, 'tap', err);
+      }
+    },
+    onEnd: () => {
+      setLive(false);
+      interrupt();
+    },
   };
 
   const credit = health.data
@@ -550,10 +796,26 @@ export default function Assistant() {
         ) : (
           <Listening
             key={listenKey}
-            typingFirst={startTyping || health.data?.speech_to_text.configured === false}
+            voice={voice}
+            typing={typing || sttOff}
+            onTyping={(on) => {
+              setListenError(null);
+              setLive(!on);
+              if (on) interrupt();
+              setTyping(on);
+            }}
+            error={listenError ?? (sttOff ? 'Voice isn’t set up on the server yet, so type instead.' : null)}
+            onStart={() => {
+              setListenError(null);
+              setLive(true);
+              void listenNow({ kind: 'request' });
+            }}
+            onStop={voiceBar.onSendNow}
+            onText={(text) => {
+              setLive(false);
+              void ask(text, {});
+            }}
             credit={credit}
-            initialError={listenError ?? (health.data?.speech_to_text.configured === false ? 'Voice isn’t set up on the server yet, so type instead.' : null)}
-            onText={ask}
           />
         )}
       </DarkTheme>
@@ -564,12 +826,18 @@ export default function Assistant() {
       <Review
         plan={plan}
         busy={busy}
+        turn={shownTurn}
+        level={voice.level}
         onAnswer={answer}
         onApply={apply}
         onBack={() => {
+          interrupt();
+          setLive(!typing);
           setListenKey((k) => k + 1);
           setPhase('listening');
         }}
+        onTalk={talk}
+        voiceBar={voiceBar}
       />
     );
   }
@@ -579,16 +847,15 @@ export default function Assistant() {
         plan={plan}
         appliedIndexes={applied.indexes}
         undoUntil={applied.until}
+        turn={shownTurn}
+        level={voice.level}
         onUndo={undo}
         onNext={(text) => {
-          if (text) ask(text, {});
-          else {
-            setStartTyping(false);
-            setListenError(null);
-            setListenKey((k) => k + 1);
-            setPhase('listening');
-          }
+          setLive(false);
+          void ask(text, {});
         }}
+        onTalk={talk}
+        voiceBar={voiceBar}
       />
     );
   }
