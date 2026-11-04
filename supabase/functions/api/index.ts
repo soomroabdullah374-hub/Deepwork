@@ -62,15 +62,7 @@ import {
   WEEKDAYS_LONG,
 } from '../_shared/time.ts';
 import { transcribe, transcribeQuick } from '../_shared/assistant/stt.ts';
-import {
-  callContext,
-  type CallLine,
-  type CallReply,
-  callReply,
-  fallbackLine,
-  type Pending,
-  runCallAction,
-} from '../_shared/assistant/call.ts';
+import { callContext, type CallLine, type CallReply, callReply, fallbackLine, runCallAction } from '../_shared/assistant/call.ts';
 import { speak } from '../_shared/assistant/tts.ts';
 import {
   guessReplyLanguage,
@@ -891,7 +883,7 @@ route('POST', '/assistant/undo', async (ctx) => {
 // One turn of the call the phone rings with when a session's reminder went unanswered:
 // what they said (a recorded clip, or text) → the agent's reply, and the change it made.
 // The first turn has nothing said yet: the agent opens the call. The app keeps the
-// conversation and a change waiting for a yes, and sends them back every turn.
+// conversation and sends it back every turn.
 
 function callHistory(value: unknown): CallLine[] {
   return (Array.isArray(value) ? value : [])
@@ -899,13 +891,6 @@ function callHistory(value: unknown): CallLine[] {
     .filter((l) => (l.who === 'agent' || l.who === 'user') && typeof l.text === 'string' && l.text.trim())
     .slice(-16)
     .map((l) => ({ who: l.who as CallLine['who'], text: String(l.text).trim().slice(0, 400) }));
-}
-
-function callPending(value: unknown): Pending | null {
-  const p = (value ?? null) as { run_id?: unknown; summary?: unknown } | null;
-  return p && typeof p.run_id === 'string' && UUID.test(p.run_id)
-    ? { run_id: p.run_id, summary: String(p.summary ?? '').slice(0, 400) }
-    : null;
 }
 
 route('POST', '/call/turn', async (ctx) => {
@@ -919,7 +904,6 @@ route('POST', '/call/turn', async (ctx) => {
   const language = romanUrdu ? 'ur-Latn' : 'en';
   const now = new Date();
   const history = callHistory(body.history);
-  const pending = callPending(body.pending);
 
   let said = typeof body.said === 'string' ? body.said.trim().slice(0, 500) : '';
   if (!said && typeof body.audio === 'string' && body.audio) {
@@ -932,7 +916,7 @@ route('POST', '/call/turn', async (ctx) => {
     });
     said = t.text.trim();
     // nothing that sounded like words: the app asks again or hangs up
-    if (!said) return json({ heard: '', silent: true, pending });
+    if (!said) return json({ heard: '', silent: true, pending: null });
   }
 
   const length = minutesBetween(block.starts_at, block.ends_at);
@@ -946,7 +930,7 @@ route('POST', '/call/turn', async (ctx) => {
       p_step_min: 15,
     })
     .catch(() => []);
-  const context = callContext(state, block, now, free.map((f) => f.starts_at), pending);
+  const context = callContext(state, block, now, free.map((f) => f.starts_at));
 
   let reply: CallReply;
   try {
@@ -954,9 +938,9 @@ route('POST', '/call/turn', async (ctx) => {
   } catch (err) {
     if (err instanceof HttpError && (err.code === 'ai_not_configured' || err.code === 'ai_auth')) throw err;
     const line = fallbackLine(romanUrdu);
-    return json({ heard: said, reply: { text: line.text, voice: line.voice, language }, changed: false, pending, end_call: true });
+    return json({ heard: said, reply: { text: line.text, voice: line.voice, language }, changed: false, pending: null, end_call: true });
   }
-  let outcome = await runCallAction(reply.action, { db, state, block, now, pending });
+  let outcome = await runCallAction(reply.action, { db, state, block, now });
   if (!outcome.ok && outcome.problem) {
     // Tell the agent what went wrong: it explains, or picks something that works.
     const failed = reply.action.type;
@@ -967,7 +951,7 @@ route('POST', '/call/turn', async (ctx) => {
         said || null,
         `Note: your action "${failed}" could not be done: ${outcome.problem}. Tell them briefly and offer another option. Use action "none" unless they already chose something that works.`,
       );
-      outcome = reply.action.type === 'none' ? { ...outcome, ok: true } : await runCallAction(reply.action, { db, state, block, now, pending });
+      outcome = reply.action.type === 'none' ? { ...outcome, ok: true } : await runCallAction(reply.action, { db, state, block, now });
     } catch {
       // keep the first reply's problem
     }
@@ -987,9 +971,8 @@ route('POST', '/call/turn', async (ctx) => {
     reply: { text: line.text, voice: line.voice, language },
     action: { type: reply.action.type, ok: outcome.ok },
     changed: outcome.changed,
-    pending: outcome.pending,
-    // a change still waiting for a yes keeps the call open
-    end_call: outcome.pending ? false : reply.end_call,
+    pending: null,
+    end_call: reply.end_call,
   });
 });
 

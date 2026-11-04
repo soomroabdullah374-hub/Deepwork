@@ -14,7 +14,7 @@ import { makeState, NOW, S_SUN25 } from './fixtures.ts';
 // The call is about Sunday's Cloud lab at 18:00, 45 minutes after NOW (17:15 Karachi).
 const action = (a: Partial<CallAction>): CallAction => ({ type: 'none', minutes: null, date: null, time: null, request: null, ...a });
 
-function fakeCallDb(opts: { clash?: boolean; checks?: { index: number; type: string; status: string }[] } = {}) {
+function fakeCallDb(opts: { clash?: boolean } = {}) {
   const calls: { fn: string; args: Record<string, unknown> }[] = [];
   return {
     calls,
@@ -27,11 +27,6 @@ function fakeCallDb(opts: { clash?: boolean; checks?: { index: number; type: str
         });
       }
       return {} as T;
-    },
-    // deno-lint-ignore require-await
-    async select<T>(table: string, query: string): Promise<T[]> {
-      calls.push({ fn: `select ${table}`, args: { query } });
-      return [{ checks: opts.checks ?? [], applied_at: null }] as T[];
     },
     // deno-lint-ignore require-await
     async insert<T>(table: string, row: Record<string, unknown>): Promise<T> {
@@ -50,7 +45,7 @@ function setup(romanUrdu = false) {
 
 Deno.test('the call knows the session, the time left and what else is on', () => {
   const { state, block } = setup(true);
-  const c = callContext(state, block, NOW, ['2026-10-25T16:30:00Z'], null);
+  const c = callContext(state, block, NOW, ['2026-10-25T16:30:00Z']);
   assertEquals(c.romanUrdu, true);
   assertEquals(c.session.minutesUntil, 45);
   assertEquals(c.session.when, 'today 18:00–19:00');
@@ -95,7 +90,7 @@ Deno.test('start, later, skip and done go straight to the session', async () => 
     [action({ type: 'done' }), { p_action: 'finish', p: {} }],
   ] as const) {
     const db = fakeCallDb();
-    const out = await runCallAction(a, { db, state, block, now: NOW, pending: null });
+    const out = await runCallAction(a, { db, state, block, now: NOW });
     assertEquals(out.ok, true);
     assertEquals(out.changed, true);
     assertEquals(db.calls, [{ fn: 'block_action', args: { p_id: block.id, ...expected } }]);
@@ -105,45 +100,24 @@ Deno.test('start, later, skip and done go straight to the session', async () => 
 Deno.test('another time is local time; a taken time comes back as a problem to explain', async () => {
   const { state, block } = setup();
   const db = fakeCallDb();
-  const out = await runCallAction(action({ type: 'move', date: '2026-10-25', time: '21:30' }), { db, state, block, now: NOW, pending: null });
+  const out = await runCallAction(action({ type: 'move', date: '2026-10-25', time: '21:30' }), { db, state, block, now: NOW });
   assertEquals(out.ok, true);
   assertEquals(db.calls[0].args, { p_id: block.id, p_action: 'move', p: { starts_at: '2026-10-25T16:30:00.000Z' } });
 
   const busy = fakeCallDb({ clash: true });
-  const clash = await runCallAction(action({ type: 'move', date: '2026-10-26', time: '10:00' }), { db: busy, state, block, now: NOW, pending: null });
+  const clash = await runCallAction(action({ type: 'move', date: '2026-10-26', time: '10:00' }), { db: busy, state, block, now: NOW });
   assertEquals(clash.ok, false);
   assertEquals(clash.changed, false);
   assertStringIncludes(clash.problem ?? '', 'Training class');
 
-  const missing = await runCallAction(action({ type: 'move', date: '2026-10-26' }), { db, state, block, now: NOW, pending: null });
+  const missing = await runCallAction(action({ type: 'move', date: '2026-10-26' }), { db, state, block, now: NOW });
   assertEquals(missing.ok, false);
 });
 
 Deno.test('a session that is already done is not started again', async () => {
   const { state, block } = setup();
   const db = fakeCallDb();
-  const out = await runCallAction(action({ type: 'start' }), { db, state, block: { ...block, status: 'done' }, now: NOW, pending: null });
-  assertEquals(out, { ok: true, changed: false, pending: null });
+  const out = await runCallAction(action({ type: 'start' }), { db, state, block: { ...block, status: 'done' }, now: NOW });
+  assertEquals(out, { ok: true, changed: false });
   assertEquals(db.calls.length, 0);
-});
-
-Deno.test('a waiting change is applied on yes and dropped on no', async () => {
-  const { state, block } = setup();
-  const pending = { run_id: '30000000-0000-4000-8000-000000000001', summary: 'Add Gym' };
-  const db = fakeCallDb({
-    checks: [
-      { index: 0, type: 'add_commitment', status: 'ok' },
-      { index: 1, type: 'clarify', status: 'needs_answer' },
-      { index: 2, type: 'add_session', status: 'clash' },
-    ],
-  });
-  const yes = await runCallAction(action({ type: 'confirm' }), { db, state, block, now: NOW, pending });
-  assertEquals(yes, { ok: true, changed: true, pending: null });
-  assertEquals(db.calls.at(-1), { fn: 'assistant_apply', args: { p_run: pending.run_id, p_indexes: [0] } });
-
-  const no = await runCallAction(action({ type: 'cancel' }), { db: fakeCallDb(), state, block, now: NOW, pending });
-  assertEquals(no, { ok: true, changed: false, pending: null });
-
-  const nothing = await runCallAction(action({ type: 'confirm' }), { db: fakeCallDb(), state, block, now: NOW, pending: null });
-  assertEquals(nothing.ok, false);
 });
