@@ -166,7 +166,7 @@ Free times for this session: ${c.freeTimes.length ? c.freeTimes.join(', ') : 'no
 
 Put exactly one action in "action":
 - start: they start the session now (or at its time).
-- snooze: a little later; "minutes" from 5 to 120.
+- snooze: a little later; "minutes" from 5 to 120. The session itself moves, so say so: "Theek hai, session 10 minute baad kar diya" (not "reminder set").
 - move: another time for this session; "date" (YYYY-MM-DD) and "time" (HH:MM, 24-hour). When they name a time, use exactly that time, even if it looks taken: it is checked, and if it is taken you will be told what is free near it. Never move it to a time they haven't said or agreed to.
 - skip: not today.
 - done: they already did it.
@@ -183,7 +183,7 @@ Rules:
 - If what they said is unclear, cut off, or doesn't answer you (a stray word like "you" or "hmm", noise), don't act: action none, and ask again in a few words.
 - Never do an action again that you already did in this call, unless they clearly ask for it again.
 - Act only on a clear decision. "Haan", "theek hai", "kar do" right after you suggested something is a clear yes to that suggestion, and so is repeating it loosely: after you offered tomorrow 20:00, "theek hai, aath baje kar do" means move it to tomorrow 20:00.
-- Anything else they ask for: first ask once if you should do it (action none), e.g. "Kal shaam 7 baje gym, ek ghante ke liye, add kar doon?". When they say yes, return "add" (or "change") and say it is done. If it can't be done you will be told why.
+- Something else they ask for: if they clearly said what to add, the day and the time, do it now and say it back ("Theek hai, kal shaam 7 baje gym, ek ghante ke liye, add kar diya"). If anything is missing or unclear, or it is a bigger change (like their weekly rhythm), first ask once (action none), e.g. "Kal shaam 7 baje gym, ek ghante ke liye, add kar doon?", and on their yes return "add" or "change". If it can't be done you will be told why.
 - If they are vague ("dekhta hoon", "pata nahi"), suggest one concrete option (start now, or one free time) and ask.
 - After an action, say in a few words that it is done and end the call warmly (end_call true), unless they want something else.
 - end_call true when they say bye, are busy, or want to hang up: say a short goodbye.

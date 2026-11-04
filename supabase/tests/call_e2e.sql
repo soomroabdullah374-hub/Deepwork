@@ -4,9 +4,10 @@
 --
 -- A throwaway user (random password) gets a daily session about 35 minutes away with a
 -- 30-minute nudge and a call 10 minutes before. Then a whole call: DeepWork opens, they
--- want ten minutes, ask for gym tomorrow at 7 (asked first, saved on "haan"), try to move
--- the session onto the gym (refused, with free times either side), take 8 pm, and say
--- bye. Every change is checked in the plan afterwards; the account is deleted at the end.
+-- want ten minutes, ask for gym tomorrow at 7 (saved at once and read back, or asked
+-- first and saved on "haan"), try to move the session onto the gym (refused, with free
+-- times either side), take 8 pm, and say bye. Every change is checked in the plan
+-- afterwards; the account is deleted at the end.
 
 create or replace function pg_temp.j(p text) returns jsonb language plpgsql immutable as $$
 begin return p::jsonb; exception when others then return null; end $$;
@@ -57,6 +58,7 @@ declare
   v_gym    text;
   v_hist   jsonb := '[]'::jsonb;
   v_said   text;
+  v_added  boolean;
 begin
   perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '30000');
   v_start := to_char(date_trunc('hour', v_local)
@@ -118,23 +120,25 @@ begin
     info := pg_temp.said(b) || format(' | plan: %s → %s %s', to_char(v_before at time zone 'Asia/Karachi', 'HH24:MI'),
                                       to_char(v_after at time zone 'Asia/Karachi', 'HH24:MI'), v_status); return next;
 
+    -- clear and complete: saved at once and read back, or asked first (both are fine)
     v_said := 'Aur haan, kal shaam saat baje gym bhi add kar do, ek ghante ke liye';
     b := pg_temp.turn(v_jwt, v_block, v_hist, v_said);
     v_hist := v_hist || jsonb_build_array(jsonb_build_object('who', 'user', 'text', v_said), jsonb_build_object('who', 'agent', 'text', b -> 'reply' ->> 'text'));
+    v_added := coalesce((b ->> 'changed')::boolean, false);
     step := '3 "' || v_said || '"'; ms := (b ->> '_ms')::int;
-    ok := not coalesce((b ->> 'changed')::boolean, false) and b -> 'reply' ->> 'text' like '%?%';
+    ok := case when v_added then b -> 'action' ->> 'type' = 'add' else b -> 'reply' ->> 'text' like '%?%' end;
     info := pg_temp.said(b); return next;
 
-    v_said := 'Haan kar do';
+    v_said := case when v_added then 'Theek hai' else 'Haan kar do' end;
     b := pg_temp.turn(v_jwt, v_block, v_hist, v_said);
     v_hist := v_hist || jsonb_build_array(jsonb_build_object('who', 'user', 'text', v_said), jsonb_build_object('who', 'agent', 'text', b -> 'reply' ->> 'text'));
     r := pg_temp.call('GET', v_api || '/blocks?from=' || to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
                       || '&to=' || to_char(now() + interval '3 days', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), v_jwt);
-    select format('%s %s–%s (%s)', x ->> 'title', to_char((x ->> 'starts_at')::timestamptz at time zone 'Asia/Karachi', 'Dy DD Mon HH24:MI'),
-                  to_char((x ->> 'ends_at')::timestamptz at time zone 'Asia/Karachi', 'HH24:MI'), x ->> 'kind')
-      into v_gym from jsonb_array_elements(pg_temp.j(r.content)) x where x ->> 'title' ilike '%gym%' limit 1;
-    step := '4 "' || v_said || '"'; ms := (b ->> '_ms')::int;
-    ok := (b ->> 'changed')::boolean and v_gym like '%' || to_char(v_local::date + 1, 'DD Mon') || ' 19:00–20:00%';
+    select format('%s %s–%s (%s) x%s', min(x ->> 'title'), to_char(min((x ->> 'starts_at')::timestamptz) at time zone 'Asia/Karachi', 'Dy DD Mon HH24:MI'),
+                  to_char(min((x ->> 'ends_at')::timestamptz) at time zone 'Asia/Karachi', 'HH24:MI'), min(x ->> 'kind'), count(*))
+      into v_gym from jsonb_array_elements(pg_temp.j(r.content)) x where x ->> 'title' ilike '%gym%';
+    step := '4 "' || v_said || '"' || case when v_added then ' (already added: no second gym)' else '' end; ms := (b ->> '_ms')::int;
+    ok := (v_added or (b ->> 'changed')::boolean) and v_gym like '%' || to_char(v_local::date + 1, 'DD Mon') || ' 19:00–20:00 (commitment) x1';
     info := pg_temp.said(b) || ' | plan: ' || coalesce(v_gym, 'no gym found'); return next;
 
     v_said := 'Acha, aaj wala session bhi kal shaam saat baje kar do';
