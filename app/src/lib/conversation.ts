@@ -19,7 +19,7 @@ export type Listen =
   | { kind: 'confirm' } // yes saves, no doesn't, anything else is a new request
   | { kind: 'more' }; // after saving or an answer: a new request, or no to finish
 
-type LineKey = 'confirmOne' | 'confirmMany' | 'when' | 'done' | 'more' | 'notSaved' | 'goAhead' | 'bye';
+type LineKey = 'confirmOne' | 'confirmMany' | 'when' | 'done' | 'more' | 'notSaved' | 'goAhead' | 'bye' | 'hello' | 'callLater' | 'lineDown';
 
 const LINES: Record<LineKey, Record<ReplyLanguage, Line>> = {
   confirmOne: {
@@ -56,6 +56,22 @@ const LINES: Record<LineKey, Record<ReplyLanguage, Line>> = {
     en: { text: 'Go ahead.', tts: 'Go ahead.' },
     'ur-Latn': { text: 'Boliye.', tts: 'بولیے۔' },
     ur: { text: 'بولیے۔', tts: 'بولیے۔' },
+  },
+  // on a reminder call
+  hello: {
+    en: { text: 'Hello? Can you hear me?', tts: 'Hello? Can you hear me?' },
+    'ur-Latn': { text: 'Hello? Aap sun rahe hain?', tts: 'ہیلو؟ آپ سن رہے ہیں؟' },
+    ur: { text: 'ہیلو؟ آپ سن رہے ہیں؟', tts: 'ہیلو؟ آپ سن رہے ہیں؟' },
+  },
+  callLater: {
+    en: { text: "Okay, I'll leave it for now. Your session is in the app. Bye!", tts: "Okay, I'll leave it for now. Your session is in the app. Bye!" },
+    'ur-Latn': { text: 'Theek hai, abhi rehne dete hain. Session app mein hai. Allah Hafiz!', tts: 'ٹھیک ہے، ابھی رہنے دیتے ہیں۔ سیشن ایپ میں ہے۔ اللہ حافظ!' },
+    ur: { text: 'ٹھیک ہے، ابھی رہنے دیتے ہیں۔ سیشن ایپ میں ہے۔ اللہ حافظ!', tts: 'ٹھیک ہے، ابھی رہنے دیتے ہیں۔ سیشن ایپ میں ہے۔ اللہ حافظ!' },
+  },
+  lineDown: {
+    en: { text: "Sorry, the line isn't good right now. Please check the session in the app.", tts: "Sorry, the line isn't good right now. Please check the session in the app." },
+    'ur-Latn': { text: 'Maaf kijiye, abhi line theek nahi. Session app mein dekh lijiye.', tts: 'معاف کیجیے، ابھی لائن ٹھیک نہیں۔ سیشن ایپ میں دیکھ لیجیے۔' },
+    ur: { text: 'معاف کیجیے، ابھی لائن ٹھیک نہیں۔ سیشن ایپ میں دیکھ لیجیے۔', tts: 'معاف کیجیے، ابھی لائن ٹھیک نہیں۔ سیشن ایپ میں دیکھ لیجیے۔' },
   },
   bye: {
     en: { text: 'Okay. Good luck with your sessions.', tts: 'Okay. Good luck with your sessions.' },

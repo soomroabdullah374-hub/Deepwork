@@ -10,3 +10,4 @@ export * from './Ring';
 export * from './Schedule';
 export * from './TabBar';
 export * from './Text';
+export * from './VoiceBars';

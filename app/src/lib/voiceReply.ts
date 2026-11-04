@@ -25,9 +25,13 @@ let serverVoiceOff = false;
 let urduVoice: Promise<string | null> | null = null;
 
 function findUrduVoice(): Promise<string | null> {
-  urduVoice ??= Speech.getAvailableVoicesAsync()
-    .then((voices) => voices.find((v) => v.language.toLowerCase().startsWith('ur'))?.identifier ?? null)
-    .catch(() => null);
+  // a speech engine that never answers must not hold up the reply (or a call)
+  urduVoice ??= Promise.race([
+    Speech.getAvailableVoicesAsync()
+      .then((voices) => voices.find((v) => v.language.toLowerCase().startsWith('ur'))?.identifier ?? null)
+      .catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
+  ]);
   return urduVoice;
 }
 

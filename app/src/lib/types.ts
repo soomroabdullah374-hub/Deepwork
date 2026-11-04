@@ -6,6 +6,8 @@ export interface Rule {
   start_time: string; // "20:00:00"
   duration_min: number;
   lead_min: number;
+  /** Ring like a call this long before a session whose reminder went unanswered (0: never). */
+  call_lead_min?: number;
 }
 
 export interface Milestone {
@@ -189,4 +191,28 @@ export interface Health {
   llm: { configured: boolean; provider: string; model: string };
   speech_to_text: { configured: boolean; provider: string };
   text_to_speech: { configured: boolean; provider: string };
+}
+
+// ───────────────────────── reminder calls (POST /call/turn)
+export interface CallLine {
+  who: 'agent' | 'user';
+  text: string;
+}
+
+/** A change planned on the call, waiting for their yes. */
+export interface CallPending {
+  run_id: string;
+  summary: string;
+}
+
+export interface CallTurn {
+  /** What they said, in Roman Urdu or English. */
+  heard: string;
+  /** Nothing that sounded like words. */
+  silent?: boolean;
+  reply?: { text: string; voice: string; language: 'en' | 'ur-Latn' };
+  action?: { type: string; ok: boolean };
+  changed?: boolean;
+  pending: CallPending | null;
+  end_call?: boolean;
 }

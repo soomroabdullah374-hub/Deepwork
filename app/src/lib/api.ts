@@ -10,6 +10,9 @@ import type {
   ApplyResult,
   AssistantPlan,
   Block,
+  CallLine,
+  CallPending,
+  CallTurn,
   CommitmentCheck,
   DraftPlan,
   FreeSlot,
@@ -38,6 +41,7 @@ export interface RuleInput {
   start_time: string;
   duration_min: number;
   lead_min: number;
+  call_lead_min?: number;
 }
 
 export interface CommitmentInput {
@@ -47,6 +51,18 @@ export interface CommitmentInput {
   duration_min: number;
   one_off_date?: string | null;
   starts_on?: string | null;
+}
+
+/** A recording as base64: a file on the phone, a blob: URL in a browser. */
+export async function clipBase64(uri: string): Promise<string> {
+  if (Platform.OS !== 'web') return await new File(uri).base64();
+  const blob = await (await fetch(uri)).blob();
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 export const api = {
@@ -114,6 +130,10 @@ export const api = {
   exportData: () => authed<Record<string, unknown>>('GET', '/export', { timeoutMs: 60_000 }),
 
   deleteAccount: () => authed('DELETE', '/account'),
+
+  /** One turn of a reminder call: what they said (a clip, or text) → reply and change. */
+  callTurn: (input: { block_id: string; history: CallLine[]; audio?: string; mime?: string; said?: string; pending?: CallPending | null }) =>
+    authed<CallTurn>('POST', '/call/turn', { body: input, timeoutMs: 60_000 }),
 
   /** Sends the recording itself as the body (the server also takes multipart). */
   transcribe: async (fileUri: string, mime = 'audio/mp4') => {

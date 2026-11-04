@@ -6,6 +6,8 @@ export interface Rule {
   start_time: string; // "20:00:00"
   duration_min: number;
   lead_min: number;
+  /** Ring like a call this long before a session whose reminder went unanswered (0: never). */
+  call_lead_min?: number;
 }
 
 export interface Milestone {

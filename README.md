@@ -77,6 +77,15 @@ question, another time for a clash, or "yes" / "no" to save ("haan", "theek hai 
 "nahi rehne do" and Urdu script work too), then "anything else?" until you say no or tap ✕.
 Any tap takes over from the voice, and nothing is saved without a yes or a tap on Apply.
 
+**Reminder calls.** Each goal's rhythm has a Nudge (a reminder, e.g. 30 minutes before) and a
+Call (e.g. 10 minutes before). If the reminder goes unanswered, the phone rings like an
+incoming call, with no phone number and over the lock screen (`app/modules/deepwork-call`,
+exact alarms and a full-screen call notification). Answering opens a live conversation in
+Roman Urdu or English (`POST /call/turn`: Groq Whisper for speech, the LLM for the reply).
+Whatever you agree is saved straight away: start now, a little later, another time, skip, or
+any other change, which the assistant plans and you confirm with a yes. Settings › Test call
+rings in 10 seconds.
+
 **Typing.** Lengths and times can be typed as well as picked: "1h 40m", "dedh ghanta",
 "8:30 pm", "raat 8 baje", "saade 8". Sessions last 10 minutes to 8 hours and commitments 5
 minutes to 24 hours; an end time sets the length, and overnight ends say "next day". A

@@ -5,6 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
 import {
+  DEFAULT_RHYTHM,
   DeadlineSummary,
   GoalDates,
   type MilestoneDraft,
@@ -41,8 +42,14 @@ export default function EditGoal() {
   );
   const [rhythm, setRhythm] = useState<RhythmDraft>(
     goal?.rule
-      ? { weekdays: goal.rule.weekdays, start_time: hhmm(goal.rule.start_time), duration_min: goal.rule.duration_min, lead_min: goal.rule.lead_min }
-      : { weekdays: [1, 3, 5], start_time: '20:00', duration_min: 60, lead_min: 10 },
+      ? {
+        weekdays: goal.rule.weekdays,
+        start_time: hhmm(goal.rule.start_time),
+        duration_min: goal.rule.duration_min,
+        lead_min: goal.rule.lead_min,
+        call_lead_min: goal.rule.call_lead_min ?? 0,
+      }
+      : DEFAULT_RHYTHM,
   );
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -62,7 +69,8 @@ export default function EditGoal() {
     goal.rule.weekdays.join(',') !== rhythm.weekdays.join(',') ||
     hhmm(goal.rule.start_time) !== rhythm.start_time ||
     goal.rule.duration_min !== rhythm.duration_min ||
-    goal.rule.lead_min !== rhythm.lead_min;
+    goal.rule.lead_min !== rhythm.lead_min ||
+    (goal.rule.call_lead_min ?? 0) !== rhythm.call_lead_min;
   const clashes = ruleChanged ? (check?.clashes.length ?? 0) : 0;
 
   const run = async (label: string, fn: () => Promise<unknown>, done: string, leave = false) => {

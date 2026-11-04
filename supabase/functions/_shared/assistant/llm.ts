@@ -20,7 +20,12 @@ export class LlmNotConfigured extends HttpError {
   }
 }
 
-function body(mode: Mode, messages: ChatMessage[], schema: Record<string, unknown>, name: string) {
+export interface ChatOptions {
+  /** Less thinking for quick turns (a phone call); defaults to LLM_REASONING_EFFORT. */
+  reasoningEffort?: 'low' | 'medium' | 'high';
+}
+
+function body(mode: Mode, messages: ChatMessage[], schema: Record<string, unknown>, name: string, opts: ChatOptions) {
   const llm = config.llm;
   // Reasoning tokens count toward the limit, so leave room for them.
   const base: Record<string, unknown> = { model: llm.model, messages, temperature: 0, max_completion_tokens: 4096 };
@@ -28,7 +33,7 @@ function body(mode: Mode, messages: ChatMessage[], schema: Record<string, unknow
     base.response_format = { type: 'json_schema', json_schema: { name, schema, strict: true } };
   }
   if (mode === 'schema_strict_reasoning') {
-    base.reasoning_effort = llm.reasoningEffort;
+    base.reasoning_effort = opts.reasoningEffort ?? llm.reasoningEffort;
     base.include_reasoning = false;
   }
   if (mode === 'json_object') {
@@ -64,6 +69,7 @@ export async function chatJson(
   messages: ChatMessage[],
   schema: Record<string, unknown>,
   name: string,
+  opts: ChatOptions = {},
 ): Promise<{ data: unknown; model: string; mode: Mode }> {
   const llm = config.llm;
   if (!llm.apiKey) throw new LlmNotConfigured();
@@ -76,7 +82,7 @@ export async function chatJson(
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${llm.apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(body(mode, messages, schema, name)),
+          body: JSON.stringify(body(mode, messages, schema, name, opts)),
         },
         60_000,
       );

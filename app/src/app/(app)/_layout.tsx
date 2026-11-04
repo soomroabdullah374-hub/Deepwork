@@ -10,6 +10,7 @@ import { Platform } from 'react-native';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { showBanner } from '@/lib/banner';
+import { answerCall, syncCalls } from '@/lib/calls';
 import { errorMessage } from '@/lib/http';
 import { askPermission, syncReminders } from '@/lib/notifications';
 import { getFlag, setFlag, setTheme } from '@/lib/prefs';
@@ -41,6 +42,8 @@ function useNotificationResponses(enabled: boolean) {
     handled.current = key;
     const data = response.notification.request.content.data as { url?: string; block_id?: string | null };
     const id = data.block_id ?? undefined;
+    // the reminder was answered: no reminder call for this session
+    if (id) answerCall(id).catch(() => undefined);
     (async () => {
       try {
         if (response.actionIdentifier === 'snooze' && id) {
@@ -79,6 +82,7 @@ export default function AppLayout() {
     if (!data) return;
     setTheme(data.profile.theme);
     syncReminders(data).catch(() => undefined);
+    syncCalls(data).catch(() => undefined);
   }, [data]);
 
   // Ask for notification permission once, after the first goal exists.
@@ -104,6 +108,7 @@ export default function AppLayout() {
       <Stack.Screen name="new-goal" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
       <Stack.Screen name="focus/[id]" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
       <Stack.Screen name="assistant" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+      <Stack.Screen name="call/[id]" options={{ presentation: 'fullScreenModal', animation: 'fade', gestureEnabled: false }} />
       <Stack.Screen name="move/[id]" options={{ presentation: 'transparentModal', animation: 'none', contentStyle: { backgroundColor: 'transparent' } }} />
       <Stack.Screen name="commitment" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
     </Stack>

@@ -116,6 +116,8 @@ create table schedule_rules (
   start_time   time not null,
   duration_min int  not null check (duration_min between 10 and 480),
   lead_min     int  not null default 10 check (lead_min between 0 and 120),
+  -- the phone rings like a call this long before a session whose reminder went unanswered
+  call_lead_min int not null default 0 check (call_lead_min between 0 and 120),
   foreign key (goal_id, user_id) references goals (id, user_id) on delete cascade
 );
 

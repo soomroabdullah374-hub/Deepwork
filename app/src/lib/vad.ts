@@ -37,7 +37,8 @@ export type VadEvent = 'end' | 'no_speech' | null;
 
 export const vadStart = (): VadState => ({ elapsedMs: 0, speechMs: 0, silenceMs: 0, peak: -160, recent: [] });
 
-export function vadStep(s: VadState, db: number | undefined, dtMs: number): [VadState, VadEvent] {
+/** `endSilenceMs` overrides how long a pause ends the turn (a phone call answers sooner). */
+export function vadStep(s: VadState, db: number | undefined, dtMs: number, endSilenceMs = VAD.endSilenceMs): [VadState, VadEvent] {
   const elapsedMs = s.elapsedMs + dtMs;
   const real = typeof db === 'number' && Number.isFinite(db) && db > -100;
   const floor = s.recent.length ? Math.min(...s.recent.map((r) => r.db)) : null;
@@ -51,7 +52,7 @@ export function vadStep(s: VadState, db: number | undefined, dtMs: number): [Vad
     peak: real ? Math.max(s.peak, db) : s.peak,
     recent: recent.filter((r) => r.t > elapsedMs - VAD.floorMs),
   };
-  if (next.speechMs >= VAD.minSpeechMs) return [next, next.silenceMs >= VAD.endSilenceMs ? 'end' : null];
+  if (next.speechMs >= VAD.minSpeechMs) return [next, next.silenceMs >= endSilenceMs ? 'end' : null];
   if (next.elapsedMs >= VAD.noSpeechMs) return [next, next.peak > VAD.loud ? 'end' : 'no_speech'];
   return [next, null];
 }

@@ -38,6 +38,7 @@
 //   GET|POST /assistant/speak           reply → speech (ElevenLabs)
 //   POST   /assistant/eval              the 40-case eval (x-cron-secret only)
 //   POST   /assistant/voice-check       speak → transcribe → plan → speak (x-cron-secret only)
+//   POST   /call/turn                   one turn of a reminder call: what they said → reply + change
 
 import { config, loadSecrets, VERSION } from '../_shared/env.ts';
 import { corsHeaders, errorResponse, HttpError, json, readJson } from '../_shared/http.ts';
@@ -55,11 +56,21 @@ import {
   localDate,
   localTime,
   localToUtc,
+  minutesBetween,
   partOfDay,
   weekdayOf,
   WEEKDAYS_LONG,
 } from '../_shared/time.ts';
-import { transcribe } from '../_shared/assistant/stt.ts';
+import { transcribe, transcribeQuick } from '../_shared/assistant/stt.ts';
+import {
+  callContext,
+  type CallLine,
+  type CallReply,
+  callReply,
+  fallbackLine,
+  type Pending,
+  runCallAction,
+} from '../_shared/assistant/call.ts';
 import { speak } from '../_shared/assistant/tts.ts';
 import {
   guessReplyLanguage,
@@ -416,7 +427,16 @@ function validRule(rule: unknown): Record<string, unknown> {
   if (!(duration >= 10 && duration <= 480)) throw new HttpError(400, 'invalid', 'Sessions are 10 minutes to 8 hours.');
   const lead = r.lead_min === undefined ? 10 : Number(r.lead_min);
   if (!(lead >= 0 && lead <= 120)) throw new HttpError(400, 'invalid', 'Reminders are 0 to 120 minutes before.');
-  return { weekdays, start_time: hhmm(r.start_time), duration_min: duration, lead_min: lead };
+  // a reminder call; left out, an edit keeps the one set before
+  const call = r.call_lead_min === undefined ? undefined : Number(r.call_lead_min);
+  if (call !== undefined && !(call >= 0 && call <= 120)) throw new HttpError(400, 'invalid', 'Calls are 0 to 120 minutes before.');
+  return {
+    weekdays,
+    start_time: hhmm(r.start_time),
+    duration_min: duration,
+    lead_min: lead,
+    ...(call !== undefined ? { call_lead_min: call } : {}),
+  };
 }
 
 function validTitle(title: unknown, min = 3, max = 80): string {
@@ -865,6 +885,112 @@ route('POST', '/assistant/undo', async (ctx) => {
   const body = await readJson<{ run_id?: unknown }>(ctx.req);
   const runId = uuid(typeof body.run_id === 'string' ? body.run_id : undefined, 'assistant run');
   return json(await db.rpc('assistant_undo', { p_run: runId }));
+});
+
+// ───────────────────────── reminder call
+// One turn of the call the phone rings with when a session's reminder went unanswered:
+// what they said (a recorded clip, or text) → the agent's reply, and the change it made.
+// The first turn has nothing said yet: the agent opens the call. The app keeps the
+// conversation and a change waiting for a yes, and sends them back every turn.
+
+function callHistory(value: unknown): CallLine[] {
+  return (Array.isArray(value) ? value : [])
+    .map((l) => l as { who?: unknown; text?: unknown })
+    .filter((l) => (l.who === 'agent' || l.who === 'user') && typeof l.text === 'string' && l.text.trim())
+    .slice(-16)
+    .map((l) => ({ who: l.who as CallLine['who'], text: String(l.text).trim().slice(0, 400) }));
+}
+
+function callPending(value: unknown): Pending | null {
+  const p = (value ?? null) as { run_id?: unknown; summary?: unknown } | null;
+  return p && typeof p.run_id === 'string' && UUID.test(p.run_id)
+    ? { run_id: p.run_id, summary: String(p.summary ?? '').slice(0, 400) }
+    : null;
+}
+
+route('POST', '/call/turn', async (ctx) => {
+  const { me, db } = await user(ctx);
+  const body = await readJson<Record<string, unknown>>(ctx.req);
+  const blockId = uuid(typeof body.block_id === 'string' ? body.block_id : undefined, 'session');
+  const state = await loadState(ctx, db, me);
+  const block = state.blocks.find((b) => b.id === blockId && b.kind === 'session');
+  if (!block) throw new HttpError(404, 'not_found', 'That session is no longer on your calendar.');
+  const romanUrdu = state.profile.language === 'ur-Latn';
+  const language = romanUrdu ? 'ur-Latn' : 'en';
+  const now = new Date();
+  const history = callHistory(body.history);
+  const pending = callPending(body.pending);
+
+  let said = typeof body.said === 'string' ? body.said.trim().slice(0, 500) : '';
+  if (!said && typeof body.audio === 'string' && body.audio) {
+    if (body.audio.length > 8_000_000) throw new HttpError(413, 'too_long', 'That was too long to send.');
+    const audio = Uint8Array.from(atob(body.audio), (ch) => ch.charCodeAt(0));
+    const t = await transcribeQuick(audio, {
+      mime: typeof body.mime === 'string' ? body.mime : 'audio/mp4',
+      urdu: romanUrdu,
+      keyterms: state.goals.map((g) => g.title),
+    });
+    said = t.text.trim();
+    // nothing that sounded like words: the app asks again or hangs up
+    if (!said) return json({ heard: '', silent: true, pending });
+  }
+
+  const length = minutesBetween(block.starts_at, block.ends_at);
+  const free = await db
+    .rpc<{ starts_at: string }[]>('free_slots', {
+      p_duration_min: length,
+      p_from: now.toISOString(),
+      p_to: new Date(now.getTime() + 36 * 3_600_000).toISOString(),
+      p_limit: 4,
+      p_ignore: block.id,
+      p_step_min: 15,
+    })
+    .catch(() => []);
+  const context = callContext(state, block, now, free.map((f) => f.starts_at), pending);
+
+  let reply: CallReply;
+  try {
+    reply = await callReply(context, history, said || null);
+  } catch (err) {
+    if (err instanceof HttpError && (err.code === 'ai_not_configured' || err.code === 'ai_auth')) throw err;
+    const line = fallbackLine(romanUrdu);
+    return json({ heard: said, reply: { text: line.text, voice: line.voice, language }, changed: false, pending, end_call: true });
+  }
+  let outcome = await runCallAction(reply.action, { db, state, block, now, pending });
+  if (!outcome.ok && outcome.problem) {
+    // Tell the agent what went wrong: it explains, or picks something that works.
+    const failed = reply.action.type;
+    try {
+      reply = await callReply(
+        context,
+        history,
+        said || null,
+        `Note: your action "${failed}" could not be done: ${outcome.problem}. Tell them briefly and offer another option. Use action "none" unless they already chose something that works.`,
+      );
+      outcome = reply.action.type === 'none' ? { ...outcome, ok: true } : await runCallAction(reply.action, { db, state, block, now, pending });
+    } catch {
+      // keep the first reply's problem
+    }
+    if (!outcome.ok) {
+      reply = {
+        ...reply,
+        action: { ...reply.action, type: 'none' },
+        end_call: false,
+        reply: romanUrdu ? 'Maaf kijiye, yeh nahi ho saka. Koi aur time bataiye?' : "Sorry, I couldn't do that. Another time?",
+        reply_voice: romanUrdu ? 'معاف کیجیے، یہ نہیں ہو سکا۔ کوئی اور ٹائم بتائیے؟' : "Sorry, I couldn't do that. Another time?",
+      };
+    }
+  }
+  const line = outcome.say ?? { text: reply.reply, voice: reply.reply_voice || reply.reply };
+  return json({
+    heard: reply.heard || said,
+    reply: { text: line.text, voice: line.voice, language },
+    action: { type: reply.action.type, ok: outcome.ok },
+    changed: outcome.changed,
+    pending: outcome.pending,
+    // a change still waiting for a yes keeps the call open
+    end_call: outcome.pending ? false : reply.end_call,
+  });
 });
 
 async function speakRoute(ctx: Ctx, text: string, language: string): Promise<Response> {

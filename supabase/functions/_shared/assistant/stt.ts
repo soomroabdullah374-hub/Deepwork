@@ -121,3 +121,54 @@ async function run(auth: { authorization: string }, bodies: Record<string, unkno
   }
   throw new HttpError(504, 'stt_timeout', 'Transcription took too long. Please try again.');
 }
+
+// ───────────────────────── quick transcription for calls
+// A phone call can't wait for upload-then-poll, so calls use Groq's Whisper when the LLM
+// key is a Groq key (one request, well under a second for a short reply), and AssemblyAI
+// otherwise. Urdu speakers get language "ur" (Urdu script out; Whisper otherwise often
+// writes Urdu speech in Hindi letters). Whisper makes up a "thank you" on silence, so
+// segments it marks as probably not speech are dropped.
+
+interface WhisperSegment {
+  text: string;
+  no_speech_prob?: number;
+  avg_logprob?: number;
+}
+
+export async function transcribeQuick(
+  audio: Uint8Array<ArrayBuffer>,
+  opts: { mime?: string; urdu?: boolean; keyterms?: string[] } = {},
+): Promise<Pick<Transcript, 'text' | 'language' | 'confidence'>> {
+  const llm = config.llm;
+  if (llm.provider !== 'groq' || !llm.apiKey) {
+    const t = await transcribe(audio, opts.keyterms ?? []);
+    return { text: t.text, language: t.language, confidence: t.confidence };
+  }
+  const form = new FormData();
+  form.append('file', new Blob([audio], { type: opts.mime ?? 'audio/mp4' }), 'reply.m4a');
+  form.append('model', 'whisper-large-v3');
+  form.append('response_format', 'verbose_json');
+  form.append('temperature', '0');
+  if (opts.urdu) form.append('language', 'ur');
+  const prompt = (opts.keyterms ?? []).join(', ').slice(0, 400);
+  if (prompt) form.append('prompt', prompt);
+  const res = await fetchWithTimeout(`${llm.baseUrl}/audio/transcriptions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${llm.apiKey}` },
+    body: form,
+  }, 30_000);
+  if (res.status === 401 || res.status === 403) {
+    await res.body?.cancel();
+    throw new HttpError(503, 'stt_auth', 'The speech key was rejected. Check LLM_API_KEY in the Supabase secrets.');
+  }
+  if (!res.ok) {
+    console.error('whisper failed', res.status, (await res.text()).slice(0, 300));
+    throw new HttpError(502, 'stt_failed', "Couldn't hear that clearly. Please say it again.");
+  }
+  const out = await res.json() as { text?: string; language?: string; segments?: WhisperSegment[] };
+  const segments = out.segments ?? [];
+  const kept = segments.filter((s) => (s.no_speech_prob ?? 0) < 0.6 || (s.avg_logprob ?? 0) > -0.7);
+  const text = (segments.length ? kept.map((s) => s.text).join('') : out.text ?? '').trim();
+  const confidence = kept.length ? Math.exp(kept.reduce((sum, s) => sum + (s.avg_logprob ?? 0), 0) / kept.length) : null;
+  return { text, language: out.language ?? (opts.urdu ? 'ur' : null), confidence };
+}

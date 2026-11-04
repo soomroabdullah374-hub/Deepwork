@@ -162,6 +162,10 @@ begin
     select min((lower(period) at time zone v_tz)::date) into v_first from calendar_blocks where goal_id = v_goal;
     assert v_first = v_today + 10, format('FAIL A12: first session on %s, expected %s', v_first, v_today + 10);
 
+    s := app_state(now() - interval '1 day', now() + interval '14 days');
+    assert (select x ->> 'start_date' from jsonb_array_elements(s -> 'goals') x where (x ->> 'id')::uuid = v_goal) = (v_today + 10)::text,
+      'FAIL A12: app_state does not return the start date';
+
     r := update_goal(v_goal, jsonb_build_object('start_date', (v_today + 2)::text));
     select min((lower(period) at time zone v_tz)::date) into v_first from calendar_blocks where goal_id = v_goal;
     assert v_first = v_today + 2, format('FAIL A12: an earlier start booked from %s', v_first);
@@ -216,6 +220,20 @@ begin
   exception when check_violation then null;
   end;
   raise notice 'PASS A13: 5 min to 24 h commitments, 10 min to 8 h sessions, far one-offs booked now';
+
+  -- A14: a rhythm can ring as a call before its sessions; app_state carries the setting
+  r := update_rule(g, '{"lead_min":30,"call_lead_min":10}');
+  s := app_state(now() - interval '1 day', now() + interval '14 days');
+  assert (select (x -> 'rule' ->> 'call_lead_min')::int from jsonb_array_elements(s -> 'goals') x where (x ->> 'id')::uuid = g) = 10,
+    'FAIL A14: call_lead_min not in app_state';
+  r := update_rule(g, '{"duration_min":60}');
+  assert (select call_lead_min from schedule_rules where goal_id = g) = 10, 'FAIL A14: a rule edit lost the call setting';
+  begin
+    perform update_rule(g, '{"call_lead_min":121}');
+    raise exception 'FAIL A14: a call 121 minutes before was saved';
+  exception when check_violation then null;
+  end;
+  raise notice 'PASS A14: call reminders are kept with the rhythm and returned to the app';
 
   perform delete_my_account();
 end $$;

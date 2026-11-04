@@ -350,11 +350,16 @@ export interface RhythmDraft {
   start_time: string;
   duration_min: number;
   lead_min: number;
+  /** Ring like a call this long before, if the reminder went unanswered (0: never). */
+  call_lead_min: number;
 }
 
-export const DEFAULT_RHYTHM: RhythmDraft = { weekdays: [1, 3, 5], start_time: '20:00', duration_min: 60, lead_min: 10 };
+// a reminder 30 minutes before; a call 10 minutes before if that one is missed
+export const DEFAULT_RHYTHM: RhythmDraft = { weekdays: [1, 3, 5], start_time: '20:00', duration_min: 60, lead_min: 30, call_lead_min: 10 };
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
-const LEADS = [0, 5, 10, 15, 30];
+const LEADS = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120];
+const CALLS = [0, 2, 5, 10, 15, 20, 30];
+const before = (v: number) => (v === 0 ? 'Off' : v >= 60 ? `-${v / 60}h` : `-${v}m`);
 
 /** Live clash check for a rhythm over the next 14 days, within the goal's dates (debounced). */
 export function useRhythmCheck(rhythm: RhythmDraft, ignoreGoal?: string, dates?: { start?: string | null; until?: string | null }) {
@@ -477,8 +482,16 @@ export function RhythmEditor({
             title="Remind me before each session"
             value={rhythm.lead_min}
             options={LEADS}
-            display={(v) => (v === 0 ? 'Off' : `-${v}m`)}
+            display={before}
             onChange={(lead_min) => onChange({ ...rhythm, lead_min })}
+          />
+          <ChoiceTile
+            label="Call"
+            title="Call me if I miss the reminder"
+            value={rhythm.call_lead_min}
+            options={CALLS}
+            display={before}
+            onChange={(call_lead_min) => onChange({ ...rhythm, call_lead_min })}
           />
         </View>
         {lengthNote ? (
@@ -537,7 +550,7 @@ export function RhythmEditor({
           <T style={{ fontFamily: fonts.uiBold }}>{`${sessions} session${sessions === 1 ? '' : 's'}`}</T>
           {`${later ? ` from ${shortDate(later)}` : ''} until ${shortDate(deadline)} · ${cadenceShort(rhythm.weekdays)}${
             rhythm.lead_min > 0 ? ` · nudges at ${nudgeTime(rhythm)} and ${hhmm(rhythm.start_time)}` : ''
-          }`}
+          }${rhythm.call_lead_min > 0 ? ` · calls at ${minutesToTime(startMin - rhythm.call_lead_min)} if you miss it` : ''}`}
         </T>
       ) : (
         <T tone="secondary">Pick at least one day.</T>

@@ -68,7 +68,7 @@ begin
     'profile', v_profile,
     'goals', (
       select coalesce(jsonb_agg(jsonb_build_object(
-               'id', g.id, 'title', g.title, 'why', g.why, 'deadline', g.deadline,
+               'id', g.id, 'title', g.title, 'why', g.why, 'start_date', g.start_date, 'deadline', g.deadline,
                'status', g.status, 'created_at', g.created_at,
                'rule', (select to_jsonb(r) - 'user_id' from schedule_rules r where r.goal_id = g.id),
                'milestones', (select coalesce(jsonb_agg(jsonb_build_object(
@@ -151,7 +151,8 @@ begin
 end $$;
 
 -- ───────────────────────── goals
--- p = {title, why, start_date?, deadline, milestones:[{title}], rule:{weekdays,start_time,duration_min,lead_min}}
+-- p = {title, why, start_date?, deadline, milestones:[{title}],
+--      rule:{weekdays,start_time,duration_min,lead_min,call_lead_min}}
 create or replace function create_goal(p jsonb) returns jsonb
 language plpgsql volatile security invoker set search_path = public, pg_temp as $$
 declare
@@ -177,12 +178,13 @@ begin
     i := i + 1;
   end loop;
 
-  insert into schedule_rules (goal_id, user_id, weekdays, start_time, duration_min, lead_min)
+  insert into schedule_rules (goal_id, user_id, weekdays, start_time, duration_min, lead_min, call_lead_min)
   values (v_goal, v_uid,
           (select array_agg(distinct x::smallint order by x::smallint) from jsonb_array_elements_text(p -> 'rule' -> 'weekdays') x),
           (p -> 'rule' ->> 'start_time')::time,
           (p -> 'rule' ->> 'duration_min')::int,
-          coalesce((p -> 'rule' ->> 'lead_min')::int, 10));
+          coalesce((p -> 'rule' ->> 'lead_min')::int, 10),
+          coalesce((p -> 'rule' ->> 'call_lead_min')::int, 0));
 
   return jsonb_build_object(
     'goal_id', v_goal,
@@ -240,7 +242,8 @@ begin
     weekdays     = coalesce((select array_agg(distinct x::smallint order by x::smallint) from jsonb_array_elements_text(p -> 'weekdays') x), weekdays),
     start_time   = coalesce((p ->> 'start_time')::time, start_time),
     duration_min = coalesce((p ->> 'duration_min')::int, duration_min),
-    lead_min     = coalesce((p ->> 'lead_min')::int, lead_min)
+    lead_min     = coalesce((p ->> 'lead_min')::int, lead_min),
+    call_lead_min = coalesce((p ->> 'call_lead_min')::int, call_lead_min)
   where goal_id = p_goal and user_id = v_uid;
   if not found then
     raise exception 'goal not found' using errcode = 'P0002';

@@ -1,24 +1,25 @@
-// [15] Settings: profile, planning, reminders and look, your data.
+// [15] Settings: profile, planning, reminders and look, reminder calls, your data.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Constants from 'expo-constants';
 import { File, Paths } from 'expo-file-system';
 import { router } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import { type ReactNode, useState } from 'react';
-import { Linking, Pressable, ScrollView, View } from 'react-native';
+import { type ReactNode, useEffect, useState } from 'react';
+import { AppState as AppStatus, Linking, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TimeTile } from '@/features/pickers';
 import { api } from '@/lib/api';
 import { forgetAccount } from '@/lib/auth';
 import { showBanner } from '@/lib/banner';
+import { callsAvailable, canRingFullScreen, openFullScreenSettings, ringIn } from '@/lib/calls';
 import { errorMessage } from '@/lib/http';
 import { overlapCount } from '@/lib/model';
 import { askPermission, clearReminders, hasPermission, syncReminders } from '@/lib/notifications';
 import { setTheme } from '@/lib/prefs';
 import { STATE_KEY, useLoadedState } from '@/lib/queries';
 import { fonts, screenPadding, type ThemePreference, useTheme } from '@/lib/theme';
-import { deviceTimeZone, hhmm, zoneLabel } from '@/lib/time';
+import { deviceTimeZone, hhmm, localTime, zoneLabel } from '@/lib/time';
 import type { AppState, Profile } from '@/lib/types';
 import { Avatar, Button, Card, Field, Icon, type IconName, IconButton, Segmented, Sheet, Switch, T, TAB_BAR_SPACE } from '@/ui';
 
@@ -99,6 +100,28 @@ export default function Settings() {
   const permission = useQuery({ queryKey: ['notif-permission'], queryFn: hasPermission });
   const clashes = overlapCount(state.blocks) + state.conflicts.length;
   const deviceTz = deviceTimeZone();
+  // Android 14+ asks once before an app may ring over the lock screen; check again on return
+  const [canRing, setCanRing] = useState(() => canRingFullScreen());
+  useEffect(() => {
+    const sub = AppStatus.addEventListener('change', (s) => s === 'active' && setCanRing(canRingFullScreen()));
+    return () => sub.remove();
+  }, []);
+
+  const testCall = () => {
+    if (!callsAvailable) {
+      showBanner('Reminder calls ring on Android phones.', 'danger');
+      return;
+    }
+    const next = state.blocks
+      .filter((b) => b.kind === 'session' && (b.status === 'planned' || b.status === 'snoozed') && new Date(b.ends_at) > new Date())
+      .sort((a, b) => a.starts_at.localeCompare(b.starts_at))[0];
+    if (!next) {
+      showBanner('Add a goal first: the call talks about your next session.');
+      return;
+    }
+    ringIn(10, { id: next.id, title: 'DeepWork', body: `${p.hide_titles ? 'Your focus session' : next.title} · ${localTime(next.starts_at, p.timezone)}` });
+    showBanner('Ringing in 10 seconds. Lock the phone to see the call screen.');
+  };
 
   const save = async (patch: Partial<Profile> & { onboarded?: boolean }, message?: string) => {
     const previous = qc.getQueryData<AppState>(STATE_KEY);
@@ -244,6 +267,19 @@ export default function Settings() {
               />
             }
           />
+        </Group>
+
+        <Group title="Reminder calls">
+          <Row
+            first
+            label="Call me if I miss a reminder"
+            caption="Rings like a phone call (no number needed) and you talk it through. Set when in each goal's rhythm: Call."
+            icon="phone"
+          />
+          {callsAvailable && !canRing ? (
+            <Row label="Allow calls on the lock screen" caption="Android needs your OK once" icon="alert" onPress={openFullScreenSettings} />
+          ) : null}
+          <Row label="Test call" caption="Rings in 10 seconds about your next session" icon="bell" onPress={testCall} />
         </Group>
 
         <Group title="Your data">

@@ -32,17 +32,23 @@ export type VoicePhase = 'idle' | 'recording' | 'transcribing';
 /** Why a recording ended without a tap: a pause after speech, nothing said, or the time limit. */
 export type AutoStop = 'pause' | 'quiet' | 'max';
 
-export function useVoice({
+export function useVoice<R = Transcript>({
   onAutoStop,
   endOnPause = false,
+  pauseMs,
+  send,
 }: {
   /**
-   * Called when recording stops by itself, with the transcript (null when nothing was
-   * said), or the error when the clip couldn't be transcribed.
+   * Called when recording stops by itself, with what `send` returned (null when nothing
+   * was said), or the error when the clip couldn't be sent.
    */
-  onAutoStop?: (t: Transcript | null, why: AutoStop, error?: unknown) => void;
+  onAutoStop?: (r: R | null, why: AutoStop, error?: unknown) => void;
   /** Stop when you pause after speaking, and give up after a long silence. */
   endOnPause?: boolean;
+  /** How long a pause ends the turn (default 1.5 s). */
+  pauseMs?: number;
+  /** What happens to the clip (default: transcribed). */
+  send?: (uri: string) => Promise<R>;
 } = {}) {
   const recorder = useAudioRecorder(OPTIONS);
   const status = useAudioRecorderState(recorder, 80);
@@ -56,12 +62,14 @@ export function useVoice({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const callback = useRef(onAutoStop);
   callback.current = onAutoStop;
+  const sender = useRef(send);
+  sender.current = send;
   const vad = useRef(vadStart());
   const lastLevelAt = useRef<number | null>(null);
   // one automatic stop per recording
   const ending = useRef(false);
 
-  const stop = useCallback(async (): Promise<Transcript | null> => {
+  const stop = useCallback(async (): Promise<R | null> => {
     if (timer.current) clearTimeout(timer.current);
     if (phaseRef.current !== 'recording') return null;
     setPhase('transcribing');
@@ -73,7 +81,7 @@ export function useVoice({
       return null;
     }
     try {
-      return await api.transcribe(uri);
+      return sender.current ? await sender.current(uri) : ((await api.transcribe(uri)) as R);
     } finally {
       setPhase('idle');
     }
@@ -128,7 +136,7 @@ export function useVoice({
     const now = Date.now();
     const dt = lastLevelAt.current === null ? 80 : Math.min(500, now - lastLevelAt.current);
     lastLevelAt.current = now;
-    const [next, event] = vadStep(vad.current, status.metering, dt);
+    const [next, event] = vadStep(vad.current, status.metering, dt, pauseMs);
     vad.current = next;
     if (event === 'end') autoStop('pause');
     else if (event === 'no_speech') autoStop('quiet');
