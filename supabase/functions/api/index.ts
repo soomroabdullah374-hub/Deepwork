@@ -62,7 +62,15 @@ import {
   WEEKDAYS_LONG,
 } from '../_shared/time.ts';
 import { transcribe, transcribeQuick } from '../_shared/assistant/stt.ts';
-import { callContext, type CallLine, type CallReply, callReply, fallbackLine, runCallAction } from '../_shared/assistant/call.ts';
+import {
+  callContext,
+  type CallLine,
+  type CallReply,
+  callReply,
+  fallbackLine,
+  pickFreeTimes,
+  runCallAction,
+} from '../_shared/assistant/call.ts';
 import { speak } from '../_shared/assistant/tts.ts';
 import {
   guessReplyLanguage,
@@ -926,12 +934,12 @@ route('POST', '/call/turn', async (ctx) => {
       p_duration_min: length,
       p_from: now.toISOString(),
       p_to: new Date(now.getTime() + 36 * 3_600_000).toISOString(),
-      p_limit: 4,
+      p_limit: 150,
       p_ignore: block.id,
       p_step_min: 15,
     })
     .catch(() => []);
-  const context = callContext(state, block, now, free.map((f) => f.starts_at));
+  const context = callContext(state, block, now, pickFreeTimes(free.map((f) => f.starts_at), block));
 
   let reply: CallReply;
   try {
@@ -976,7 +984,13 @@ route('POST', '/call/turn', async (ctx) => {
   return json({
     heard: reply.heard || said,
     reply: { text: line.text, voice: line.voice, language },
-    action: { type: reply.action.type, ok: outcome.ok },
+    action: {
+      type: reply.action.type,
+      ok: outcome.ok,
+      minutes: reply.action.minutes ?? null,
+      date: reply.action.date ?? null,
+      time: reply.action.time ?? null,
+    },
     changed: outcome.changed,
     pending: null,
     end_call: reply.end_call,

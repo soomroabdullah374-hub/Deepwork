@@ -121,6 +121,21 @@ export function callContext(state: AppState, block: Block, now: Date, freeStarts
   };
 }
 
+/**
+ * Which free starts to offer: the soonest few, plus the one closest to the session's own
+ * time tomorrow ("kal isi waqt").
+ */
+export function pickFreeTimes(starts: string[], block: Pick<Block, 'starts_at'>, soon = 3): string[] {
+  const at = (s: string) => new Date(s).getTime();
+  const sorted = starts.filter((s) => !Number.isNaN(at(s))).sort((x, y) => at(x) - at(y));
+  const picked = sorted.slice(0, soon);
+  const tomorrow = at(block.starts_at) + 24 * 3_600_000;
+  let closest: string | null = null;
+  for (const s of sorted) if (closest === null || Math.abs(at(s) - tomorrow) < Math.abs(at(closest) - tomorrow)) closest = s;
+  if (closest && !picked.includes(closest) && Math.abs(at(closest) - tomorrow) <= 3 * 3_600_000) picked.push(closest);
+  return picked;
+}
+
 export function callSystemPrompt(c: CallContext): string {
   const lang = c.romanUrdu
     ? 'Speak Roman Urdu (Urdu in English letters) the everyday way people in Pakistan talk on the phone, with the usual English words mixed in (session, time, start, break). Use polite "aap".'
@@ -157,7 +172,8 @@ Put exactly one action in "action":
 Rules:
 - The action you return is carried out at once. So never ask "theek hai?" or "confirm?" about it: say it is done, e.g. "Theek hai, session 9:06 par kar diya."
 - snooze and move move the session itself (not just its reminder).
-- Two things can't be at the same time: never suggest or agree to a time that is taken on their calendar.
+- Two things can't be at the same time: never suggest a time that is taken on their calendar. If they ask for a specific time, return move with it anyway: it is checked, and if it is taken you will be told what is free near it.
+- A time with no day means the day you were talking about. "Aath baje" while talking about the evening means 20:00; if morning or evening is unclear, ask ("subah ya shaam?").
 - Act only on a clear decision. "Haan", "theek hai", "kar do" right after you suggested something is a clear yes to that suggestion.
 - Any other change they ask for: first ask once if you should do it (action none), e.g. "Kal shaam 7 baje gym, ek ghante ke liye, add kar doon?". When they say yes, return "change" and say it is done. If it can't be done you will be told why.
 - If they are vague ("dekhta hoon", "pata nahi"), suggest one concrete option (start now, or one free time) and ask.
