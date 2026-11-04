@@ -1,8 +1,9 @@
 // The reminder call. When a session's reminder went unanswered, the phone rings and this
 // agent talks it through like a friend on the phone: Roman Urdu (or English), one or two
 // short sentences a turn, and at most one action per turn, carried out right here: start,
-// a little later, another time, skip, already done, or any other change (the agent asks
-// first; on their yes the assistant plans, checks and saves it). The app keeps the
+// a little later, another time, skip, already done, add something once, or any other
+// change (the agent asks first; on their yes it is saved, other changes through the
+// assistant's planner). The app keeps the
 // conversation and sends it back every turn, so the server stores nothing about the call.
 
 import { z } from 'npm:zod@3.25.76';
@@ -15,7 +16,7 @@ import { type ChatMessage, chatJson, type ChatOptions } from './llm.ts';
 import { planWithLlm, promptContext } from './planner.ts';
 import { MUTATING_TYPES, resolvePlan } from './resolve.ts';
 
-export const CALL_ACTIONS = ['none', 'start', 'snooze', 'move', 'skip', 'done', 'change'] as const;
+export const CALL_ACTIONS = ['none', 'start', 'snooze', 'move', 'skip', 'done', 'add', 'change'] as const;
 export type CallActionType = (typeof CALL_ACTIONS)[number];
 
 export interface CallLine {
@@ -36,12 +37,13 @@ export const CALL_JSON_SCHEMA = {
     action: {
       type: 'object',
       additionalProperties: false,
-      required: ['type', 'minutes', 'date', 'time', 'request'],
+      required: ['type', 'minutes', 'date', 'time', 'title', 'request'],
       properties: {
         type: { type: 'string', enum: [...CALL_ACTIONS] },
         minutes: nullable({ type: 'integer' }),
         date: nullable({ type: 'string' }),
         time: nullable({ type: 'string' }),
+        title: nullable({ type: 'string' }),
         request: nullable({ type: 'string' }),
       },
     },
@@ -61,9 +63,10 @@ export const CallReplySchema = z.object({
       minutes: z.number().int().nullish().catch(null),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish().catch(null),
       time: z.string().regex(/^\d{1,2}:\d{2}/).transform((t) => t.padStart(5, '0').slice(0, 5)).nullish().catch(null),
+      title: z.string().transform((t) => t.trim().slice(0, 80)).nullish().catch(null),
       request: z.string().nullish().catch(null),
     })
-    .catch({ type: 'none', minutes: null, date: null, time: null, request: null }),
+    .catch({ type: 'none', minutes: null, date: null, time: null, title: null, request: null }),
   end_call: z.boolean().catch(false),
 });
 export type CallReply = z.infer<typeof CallReplySchema>;
@@ -164,21 +167,23 @@ Free times for this session: ${c.freeTimes.length ? c.freeTimes.join(', ') : 'no
 Put exactly one action in "action":
 - start: they start the session now (or at its time).
 - snooze: a little later; "minutes" from 5 to 120.
-- move: another time; "date" (YYYY-MM-DD) and "time" (HH:MM, 24-hour). Prefer the free times.
+- move: another time for this session; "date" (YYYY-MM-DD) and "time" (HH:MM, 24-hour). When they name a time, use exactly that time, even if it looks taken: it is checked, and if it is taken you will be told what is free near it. Never move it to a time they haven't said or agreed to.
 - skip: not today.
 - done: they already did it.
-- change: they said yes to another change to their schedule (add or move something else, change their weekly rhythm): write the whole request in plain English in "request", e.g. "Add gym tomorrow at 7 pm for 1 hour". It is checked and saved at once.
+- add: they said yes to putting something else on their calendar once (gym, a class, an errand): "title" (short, e.g. "Gym"), "date", "time", and "minutes" (how long; 60 if they didn't say). It is checked and saved at once.
+- change: they said yes to any other change to their schedule (move something else, change their weekly rhythm): write the whole request in plain English in "request", e.g. "Move Friday's gym to Saturday 6 pm". It is checked and saved at once.
 - none: just talking, or you need to ask something.
 
 Rules:
 - The action you return is carried out at once. So never ask "theek hai?" or "confirm?" about it: say it is done, e.g. "Theek hai, session 9:06 par kar diya."
 - snooze and move move the session itself (not just its reminder).
-- Two things can't be at the same time: never suggest a time that is taken on their calendar. If they ask for a specific time, return move with it anyway: it is checked, and if it is taken you will be told what is free near it.
+- Two things can't be at the same time: never suggest a time that is taken on their calendar.
+- When you suggest or offer something ("8 baje kar doon?"), that is a question: action none, and wait for their yes.
 - A time with no day means the day you were talking about. "Aath baje" while talking about the evening means 20:00; if morning or evening is unclear, ask ("subah ya shaam?").
 - If what they said is unclear, cut off, or doesn't answer you (a stray word like "you" or "hmm", noise), don't act: action none, and ask again in a few words.
 - Never do an action again that you already did in this call, unless they clearly ask for it again.
 - Act only on a clear decision. "Haan", "theek hai", "kar do" right after you suggested something is a clear yes to that suggestion, and so is repeating it loosely: after you offered tomorrow 20:00, "theek hai, aath baje kar do" means move it to tomorrow 20:00.
-- Any other change they ask for: first ask once if you should do it (action none), e.g. "Kal shaam 7 baje gym, ek ghante ke liye, add kar doon?". When they say yes, return "change" and say it is done. If it can't be done you will be told why.
+- Anything else they ask for: first ask once if you should do it (action none), e.g. "Kal shaam 7 baje gym, ek ghante ke liye, add kar doon?". When they say yes, return "add" (or "change") and say it is done. If it can't be done you will be told why.
 - If they are vague ("dekhta hoon", "pata nahi"), suggest one concrete option (start now, or one free time) and ask.
 - After an action, say in a few words that it is done and end the call warmly (end_call true), unless they want something else.
 - end_call true when they say bye, are busy, or want to hang up: say a short goodbye.
@@ -190,6 +195,15 @@ export function callUserMessage(history: CallLine[], said: string | null): strin
   if (!said && history.length === 0) return 'The call was just answered. They have not said anything yet.';
   const lines = history.map((l) => `${l.who === 'agent' ? 'You' : 'They'}: ${l.text}`).join('\n');
   return `${lines ? `The call so far:\n${lines}\n\n` : ''}They now say: "${said ?? ''}"`;
+}
+
+// "... kar doon?", "Shall I move it?": an offer, not a decision.
+const OFFER = /(kar (?:doon|dun|du|dein|den|dain|lein|len|lun|loon)|kar diya jaye|chah(?:e|ai)n ?ge|theek rahega|sahi rahega|shall i|should i|want me to|do you want|would you like)[^?.!]*\?/i;
+
+/** A reply that offers to do something waits for their yes: nothing is done this turn. */
+export function holdOffer(r: CallReply): CallReply {
+  if (r.action.type === 'none' || !OFFER.test(r.reply)) return r;
+  return { ...r, action: { ...r.action, type: 'none' }, end_call: false };
 }
 
 /** Someone is on the phone: never wait out a rate limit when another model can answer. */
@@ -210,7 +224,7 @@ export async function callReply(c: CallContext, history: CallLine[], said: strin
   );
   const parsed = CallReplySchema.safeParse(out.data);
   if (!parsed.success || !parsed.data.reply) throw new HttpError(502, 'ai_failed', 'The call agent could not answer.');
-  return parsed.data;
+  return holdOffer(parsed.data);
 }
 
 // ───────────────────────── carrying out what they decided
@@ -277,7 +291,7 @@ export async function runCallAction(a: CallAction, input: ActionInput): Promise<
           await blockAction('move', { starts_at: at.toISOString() });
         } catch (err) {
           // say what is free just before and after the time they asked for
-          const near = await freeNear(input, at);
+          const near = await freeNear(input, at, Math.round(minutesBetween(block.starts_at, block.ends_at)), block.id);
           const problem = problemOf(err, tz, today);
           return { ok: false, changed: false, problem: near.length ? `${problem}; free near then: ${near.join(', ')}` : problem };
         }
@@ -289,6 +303,23 @@ export async function runCallAction(a: CallAction, input: ActionInput): Promise<
       case 'done':
         await blockAction('finish');
         return done();
+      case 'add': {
+        const title = a.title?.trim();
+        if (!title || !a.date || !a.time) return { ok: false, changed: false, problem: 'what to add, its day or its time was missing' };
+        const at = localToUtc(`${a.date}T${a.time}`, tz);
+        if (at.getTime() <= now.getTime()) return { ok: false, changed: false, problem: 'that time has already passed' };
+        const minutes = Math.min(1440, Math.max(5, a.minutes ?? 60));
+        try {
+          await db.rpc('save_commitment', {
+            p: { title, weekdays: [], start_time: a.time, duration_min: minutes, one_off_date: a.date, starts_on: null },
+          });
+        } catch (err) {
+          const near = await freeNear(input, at, minutes, null);
+          const problem = problemOf(err, tz, today);
+          return { ok: false, changed: false, problem: near.length ? `${problem}; free near then: ${near.join(', ')}` : problem };
+        }
+        return done();
+      }
       case 'change':
         return await planChange(a.request ?? '', input);
       default:
@@ -299,17 +330,17 @@ export async function runCallAction(a: CallAction, input: ActionInput): Promise<
   }
 }
 
-/** The free start closest before and closest after a time, for a session this long. */
-async function freeNear({ db, state, block, now }: ActionInput, at: Date): Promise<string[]> {
+/** The free start closest before and closest after a time, for something this long. */
+async function freeNear({ db, state, now }: ActionInput, at: Date, minutes: number, ignore: string | null): Promise<string[]> {
   const tz = state.profile.timezone;
   const hour = 3_600_000;
   try {
     const slots = await db.rpc<{ starts_at: string }[]>('free_slots', {
-      p_duration_min: Math.round(minutesBetween(block.starts_at, block.ends_at)),
+      p_duration_min: minutes,
       p_from: new Date(Math.max(now.getTime(), at.getTime() - 4 * hour)).toISOString(),
       p_to: new Date(at.getTime() + 5 * hour).toISOString(),
       p_limit: 60,
-      p_ignore: block.id,
+      p_ignore: ignore,
       p_step_min: 15,
     });
     if (!Array.isArray(slots)) return [];

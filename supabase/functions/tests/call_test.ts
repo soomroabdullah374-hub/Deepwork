@@ -4,6 +4,7 @@ import {
   callContext,
   CallReplySchema,
   callSystemPrompt,
+  holdOffer,
   pickFreeTimes,
   callUserMessage,
   runCallAction,
@@ -13,7 +14,7 @@ import type { AppState } from '../_shared/state.ts';
 import { makeState, NOW, S_SUN25 } from './fixtures.ts';
 
 // The call is about Sunday's Cloud lab at 18:00, 45 minutes after NOW (17:15 Karachi).
-const action = (a: Partial<CallAction>): CallAction => ({ type: 'none', minutes: null, date: null, time: null, request: null, ...a });
+const action = (a: Partial<CallAction>): CallAction => ({ type: 'none', minutes: null, date: null, time: null, title: null, request: null, ...a });
 
 function fakeCallDb(opts: { clash?: boolean; free?: string[] } = {}) {
   const calls: { fn: string; args: Record<string, unknown> }[] = [];
@@ -23,7 +24,8 @@ function fakeCallDb(opts: { clash?: boolean; free?: string[] } = {}) {
     async rpc<T>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
       calls.push({ fn, args });
       if (fn === 'free_slots') return (opts.free ?? []).map((starts_at) => ({ starts_at })) as T;
-      if (fn === 'block_action' && opts.clash && (args.p_action === 'move' || args.p_action === 'snooze')) {
+      const busy = (fn === 'block_action' && (args.p_action === 'move' || args.p_action === 'snooze')) || fn === 'save_commitment';
+      if (opts.clash && busy) {
         throw new HttpError(409, 'clash', 'That time is taken.', {
           with: { title: 'Training class', starts_at: '2026-10-26T09:00:00Z', ends_at: '2026-10-26T12:00:00Z' },
         });
@@ -155,4 +157,44 @@ Deno.test('free times on offer: the soonest, and the one nearest the same time t
   const later = ['2026-10-25T16:30:00Z', '2026-10-26T03:00:00Z', '2026-10-25T17:00:00Z', '2026-10-26T17:30:00Z'];
   assertEquals(pickFreeTimes(later, block), ['2026-10-25T16:30:00Z', '2026-10-25T17:00:00Z', '2026-10-26T03:00:00Z']);
   assertEquals(pickFreeTimes([], block), []);
+});
+
+Deno.test('adding something once is saved straight away as a one-off commitment', async () => {
+  const { state, block } = setup();
+  const db = fakeCallDb();
+  const gym = action({ type: 'add', title: 'Gym', date: '2026-10-26', time: '19:00', minutes: null });
+  assertEquals(await runCallAction(gym, { db, state, block, now: NOW }), { ok: true, changed: true });
+  assertEquals(db.calls, [{
+    fn: 'save_commitment',
+    args: { p: { title: 'Gym', weekdays: [], start_time: '19:00', duration_min: 60, one_off_date: '2026-10-26', starts_on: null } },
+  }]);
+
+  // a taken time: what is in the way, and the free times either side for that length
+  const busy = fakeCallDb({ clash: true, free: ['2026-10-26T08:00:00Z', '2026-10-26T12:30:00Z', '2026-10-26T15:00:00Z'] });
+  const out = await runCallAction(action({ ...gym, minutes: 45 }), { db: busy, state, block, now: NOW });
+  assertEquals(out.ok, false);
+  assertEquals(out.problem, 'that time is taken by Training class (tomorrow 14:00–17:00); free near then: tomorrow 17:30, tomorrow 20:00');
+  const asked = busy.calls.find((c) => c.fn === 'free_slots')!.args;
+  assertEquals([asked.p_duration_min, asked.p_ignore], [45, null]);
+
+  // nothing is saved without a title, a day and a time, or in the past
+  for (const bad of [{ title: null }, { date: null }, { time: '16:00', date: '2026-10-25' }]) {
+    const none = fakeCallDb();
+    const r = await runCallAction(action({ ...gym, ...bad }), { db: none, state, block, now: NOW });
+    assertEquals(r.ok, false);
+    assertEquals(none.calls.length, 0);
+  }
+});
+
+Deno.test('a reply that offers something waits for the yes', () => {
+  const reply = (text: string, type: CallAction['type']) =>
+    CallReplySchema.parse({ heard: '', reply: text, reply_voice: '', action: action({ type, date: '2026-10-26', time: '20:45' }), end_call: true });
+  const held = holdOffer(reply('Kal 7 baje gym hai, 8:45 baje free hai, kya 8:45 par kar dein?', 'move'));
+  assertEquals([held.action.type, held.end_call], ['none', false]);
+  assertEquals(holdOffer(reply('Shall I move it to 8:45 tonight?', 'move')).action.type, 'none');
+  assertEquals(holdOffer(reply('Gym add kar doon?', 'add')).action.type, 'none');
+  // done and said so: it stays done, even with a question after it
+  assertEquals(holdOffer(reply('Theek hai, kal shaam 8 baje kar diya.', 'move')).action.type, 'move');
+  assertEquals(holdOffer(reply('Theek hai, das minute baad kar diya. Aur kuch?', 'snooze')).action.type, 'snooze');
+  assertEquals(holdOffer(reply('Theek hai, kal 8 baje kar lete hain.', 'move')).action.type, 'move');
 });
