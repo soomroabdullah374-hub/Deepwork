@@ -126,13 +126,33 @@ async function run(auth: { authorization: string }, bodies: Record<string, unkno
 // A phone call can't wait for upload-then-poll, so calls use Groq's Whisper when the LLM
 // key is a Groq key (one request, well under a second for a short reply), and AssemblyAI
 // otherwise. Urdu speakers get language "ur" (Urdu script out; Whisper otherwise often
-// writes Urdu speech in Hindi letters). Whisper makes up a "thank you" on silence, so
-// segments it marks as probably not speech are dropped.
+// writes Urdu speech in Hindi letters). Whisper makes up words for silence and noise
+// ("you", "Thank you."), so segments that are probably not speech are dropped.
 
-interface WhisperSegment {
+export interface WhisperSegment {
   text: string;
   no_speech_prob?: number;
   avg_logprob?: number;
+}
+
+// What Whisper says over silence or noise, said on its own.
+const STOCK = new Set([
+  'you', 'thank you', 'thanks', 'thank you very much', 'thanks for watching', 'thank you for watching',
+  'bye', 'so', 'okay', 'ok', 'the end', 'subscribe', 'شکریہ', 'سبسکرائب کریں', 'اللہ حافظ',
+]);
+const plain = (t: string) => t.toLowerCase().replace(/[.,!?…۔،؟"']/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** The words that were really spoken: segments that are probably silence or noise go. */
+export function spokenText(segments: WhisperSegment[]): string {
+  const kept = segments.filter((s) => {
+    const noSpeech = s.no_speech_prob ?? 0;
+    const logprob = s.avg_logprob ?? 0;
+    if (noSpeech >= 0.6 && logprob <= -0.7) return false; // Whisper's own silence test
+    if (noSpeech >= 0.8) return false; // almost surely not speech
+    // a stock phrase over something that may not be speech at all
+    return !(STOCK.has(plain(s.text)) && (noSpeech >= 0.2 || logprob <= -0.6));
+  });
+  return kept.map((s) => s.text).join('').trim();
 }
 
 export async function transcribeQuick(
@@ -167,8 +187,10 @@ export async function transcribeQuick(
   }
   const out = await res.json() as { text?: string; language?: string; segments?: WhisperSegment[] };
   const segments = out.segments ?? [];
-  const kept = segments.filter((s) => (s.no_speech_prob ?? 0) < 0.6 || (s.avg_logprob ?? 0) > -0.7);
-  const text = (segments.length ? kept.map((s) => s.text).join('') : out.text ?? '').trim();
+  // how sure Whisper was, per segment (no words), to tune the silence test
+  console.log('whisper', segments.map((s) => `${(s.no_speech_prob ?? 0).toFixed(2)}/${(s.avg_logprob ?? 0).toFixed(2)}/${s.text.trim().split(/\s+/).length}w`).join(' '));
+  const text = segments.length ? spokenText(segments) : (out.text ?? '').trim();
+  const kept = segments.filter((s) => text.includes(s.text.trim()));
   const confidence = kept.length ? Math.exp(kept.reduce((sum, s) => sum + (s.avg_logprob ?? 0), 0) / kept.length) : null;
   return { text, language: out.language ?? (opts.urdu ? 'ur' : null), confidence };
 }
