@@ -206,7 +206,7 @@ export async function callReply(c: CallContext, history: CallLine[], said: strin
     CALL_JSON_SCHEMA as unknown as Record<string, unknown>,
     'deepwork_call',
     // The provider counts the answer cap against its per-minute limit, so keep it close to what a turn needs.
-    onTheLine({ reasoningEffort: 'low', maxTokens: 700 }),
+    onTheLine({ reasoningEffort: 'low', maxTokens: 700, waitBudgetMs: 15_000 }),
   );
   const parsed = CallReplySchema.safeParse(out.data);
   if (!parsed.success || !parsed.data.reply) throw new HttpError(502, 'ai_failed', 'The call agent could not answer.');
@@ -336,8 +336,9 @@ async function planChange(request: string, input: ActionInput): Promise<Outcome>
     request,
     promptContext({ tz, now, goals: state.goals, commitments: state.commitments, blocks: state.blocks, romanUrdu }),
     [],
-    // the agent already wrote the request as one plain sentence, so quick thinking is enough
-    onTheLine({ reasoningEffort: 'low', maxTokens: 2000 }),
+    // The agent already wrote the request as one plain sentence, so quick thinking is enough.
+    // Only the main model plans changes (the fallback misreads them), even if it means a wait.
+    { reasoningEffort: 'low', maxTokens: 2000, waitBudgetMs: 25_000 },
   );
   const actions = await resolvePlan(plan, { state, tz, now }, db);
   const run = await db.insert<{ id: string }>('assistant_runs', {

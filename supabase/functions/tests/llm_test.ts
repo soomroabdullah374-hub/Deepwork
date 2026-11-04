@@ -95,3 +95,19 @@ Deno.test('one bad answer from the fallback is asked again, without waiting', as
     Deno.env.delete('LLM_API_KEY');
   }
 });
+
+Deno.test('a call never waits past its budget: it says the assistant is busy', async () => {
+  Deno.env.set('LLM_API_KEY', 'gsk_test');
+  const provider = fakeProvider(new Set(['openai/gpt-oss-120b']));
+  try {
+    const t0 = Date.now();
+    const err = await chatJson([{ role: 'user', content: 'hi' }], { type: 'object' }, 'test', { waitBudgetMs: 5_000 })
+      .then(() => null, (e) => e);
+    assertEquals(err?.code, 'ai_busy');
+    assertEquals(provider.models, ['openai/gpt-oss-120b']); // retry-after 9 s is past the 5 s budget
+    assert(Date.now() - t0 < 2000, 'gave up at once');
+  } finally {
+    provider.restore();
+    Deno.env.delete('LLM_API_KEY');
+  }
+});

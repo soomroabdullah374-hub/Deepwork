@@ -30,6 +30,8 @@ export interface ChatOptions {
   fallbackModel?: string;
   /** Cap on the answer, thinking included (default 4096). */
   maxTokens?: number;
+  /** Longest total wait for rate limits before giving up (someone on the phone can't wait long). */
+  waitBudgetMs?: number;
 }
 
 function body(
@@ -107,6 +109,14 @@ export async function chatJson(
   let fallback = opts.fallbackModel && opts.fallbackModel !== llm.model ? opts.fallbackModel : null;
   let mainWait = 0; // what the main model asked us to wait, when we went to the fallback instead
   let fallbackFails = 0;
+  let waited = 0;
+  const pause = async (seconds: number) => {
+    if (waited + seconds * 1000 > (opts.waitBudgetMs ?? Infinity)) {
+      throw new HttpError(503, 'ai_busy', 'The assistant is busy right now. Please try again in a minute.');
+    }
+    waited += seconds * 1000;
+    await new Promise((r) => setTimeout(r, seconds * 1000));
+  };
   let lastError = '';
   for (const mode of modes) {
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -130,7 +140,7 @@ export async function chatJson(
           continue;
         }
         // otherwise wait as told (capped) and try the same mode again
-        await new Promise((r) => setTimeout(r, wait * 1000));
+        await pause(wait);
         continue;
       }
       if (!res.ok && model === fallback) {
@@ -141,7 +151,7 @@ export async function chatJson(
           // not on this account, or failing again: wait for the main model after all
           fallback = null;
           model = llm.model;
-          await new Promise((r) => setTimeout(r, mainWait * 1000));
+          await pause(mainWait);
         }
         // otherwise (a one-off bad answer) ask the fallback once more
         continue;
