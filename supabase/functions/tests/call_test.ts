@@ -136,7 +136,7 @@ Deno.test('a session that is already done is not started again', async () => {
   assertEquals(db.calls.length, 0);
 });
 
-Deno.test('free times on offer: the soonest, and the one nearest the same time tomorrow', () => {
+Deno.test('free times on offer: the soonest an hour apart, and the one nearest the same time tomorrow', () => {
   // the session is today 18:00 Karachi (13:00Z)
   const block = { starts_at: '2026-10-25T13:00:00Z' };
   const free = [
@@ -147,16 +147,18 @@ Deno.test('free times on offer: the soonest, and the one nearest the same time t
     '2026-10-26T12:30:00Z', // tomorrow 17:30, nearest to 18:00
     '2026-10-26T13:30:00Z', // tomorrow 18:30
   ];
-  assertEquals(pickFreeTimes(free, block), [
-    '2026-10-25T16:30:00Z',
-    '2026-10-25T17:00:00Z',
-    '2026-10-26T03:00:00Z',
-    '2026-10-26T12:30:00Z',
-  ]);
+  // 22:00 is only half an hour after 21:30, so the next one is tomorrow 08:00
+  assertEquals(pickFreeTimes(free, block), ['2026-10-25T16:30:00Z', '2026-10-26T03:00:00Z', '2026-10-26T12:30:00Z']);
+  // the soonest three, then tomorrow 17:30 for "kal isi waqt"
+  const spread = ['2026-10-25T16:30:00Z', '2026-10-26T03:00:00Z', '2026-10-26T05:00:00Z', '2026-10-26T12:30:00Z'];
+  assertEquals(pickFreeTimes(spread, block), spread);
   // nothing within 3 hours of that time tomorrow (22:30 is 4.5 hours off): just the soonest
-  const later = ['2026-10-25T16:30:00Z', '2026-10-26T03:00:00Z', '2026-10-25T17:00:00Z', '2026-10-26T17:30:00Z'];
-  assertEquals(pickFreeTimes(later, block), ['2026-10-25T16:30:00Z', '2026-10-25T17:00:00Z', '2026-10-26T03:00:00Z']);
+  const later = ['2026-10-25T16:30:00Z', '2026-10-26T03:00:00Z', '2026-10-26T05:00:00Z', '2026-10-26T17:30:00Z'];
+  assertEquals(pickFreeTimes(later, block), ['2026-10-25T16:30:00Z', '2026-10-26T03:00:00Z', '2026-10-26T05:00:00Z']);
   assertEquals(pickFreeTimes([], block), []);
+  // every 15 minutes free: an hour apart, not 21:30, 21:45, 22:00
+  const quarterHours = ['2026-10-25T16:30:00Z', '2026-10-25T16:45:00Z', '2026-10-25T17:00:00Z', '2026-10-25T17:30:00Z', '2026-10-26T02:00:00Z'];
+  assertEquals(pickFreeTimes(quarterHours, block), ['2026-10-25T16:30:00Z', '2026-10-25T17:30:00Z', '2026-10-26T02:00:00Z']);
 });
 
 Deno.test('adding something once is saved straight away as a one-off commitment', async () => {

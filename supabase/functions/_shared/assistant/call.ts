@@ -125,13 +125,17 @@ export function callContext(state: AppState, block: Block, now: Date, freeStarts
 }
 
 /**
- * Which free starts to offer: the soonest few, plus the one closest to the session's own
- * time tomorrow ("kal isi waqt").
+ * Which free starts to offer: the soonest few, at least an hour apart, plus the one
+ * closest to the session's own time tomorrow ("kal isi waqt").
  */
 export function pickFreeTimes(starts: string[], block: Pick<Block, 'starts_at'>, soon = 3): string[] {
   const at = (s: string) => new Date(s).getTime();
   const sorted = starts.filter((s) => !Number.isNaN(at(s))).sort((x, y) => at(x) - at(y));
-  const picked = sorted.slice(0, soon);
+  const picked: string[] = [];
+  for (const s of sorted) {
+    if (picked.length === soon) break;
+    if (!picked.length || at(s) - at(picked[picked.length - 1]) >= 3_600_000) picked.push(s);
+  }
   const tomorrow = at(block.starts_at) + 24 * 3_600_000;
   let closest: string | null = null;
   for (const s of sorted) if (closest === null || Math.abs(at(s) - tomorrow) < Math.abs(at(closest) - tomorrow)) closest = s;
@@ -167,7 +171,7 @@ Free times for this session: ${c.freeTimes.length ? c.freeTimes.join(', ') : 'no
 Put exactly one action in "action":
 - start: they start the session now (or at its time).
 - snooze: a little later; "minutes" from 5 to 120. The session itself moves, so say so: "Theek hai, session 10 minute baad kar diya" (not "reminder set").
-- move: another time for this session; "date" (YYYY-MM-DD) and "time" (HH:MM, 24-hour). When they name a time, use exactly that time, even if it looks taken: it is checked, and if it is taken you will be told what is free near it. Never move it to a time they haven't said or agreed to.
+- move: another time for this session; "date" (YYYY-MM-DD) and "time" (HH:MM, 24-hour). Never move it to a time they haven't said or agreed to.
 - skip: not today.
 - done: they already did it.
 - add: they said yes to putting something else on their calendar once (gym, a class, an errand): "title" (short, e.g. "Gym"), "date", "time", and "minutes" (how long; 60 if they didn't say). It is checked and saved at once.
@@ -177,7 +181,7 @@ Put exactly one action in "action":
 Rules:
 - The action you return is carried out at once. So never ask "theek hai?" or "confirm?" about it: say it is done, e.g. "Theek hai, session 9:06 par kar diya."
 - snooze and move move the session itself (not just its reminder).
-- Two things can't be at the same time: never suggest a time that is taken on their calendar.
+- Only the app knows what is free. Suggest only times from "Free times" (one or two), and never say a time is taken or clashes unless a note tells you so. When they name a time for the session, return move with exactly that time: it is checked, and if it is taken you will be told what is free near it.
 - When you suggest or offer something ("8 baje kar doon?"), that is a question: action none, and wait for their yes.
 - A time with no day means the day you were talking about. "Aath baje" while talking about the evening means 20:00; if morning or evening is unclear, ask ("subah ya shaam?").
 - If what they said is unclear, cut off, or doesn't answer you (a stray word like "you" or "hmm", noise), don't act: action none, and ask again in a few words.
