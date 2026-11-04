@@ -71,6 +71,16 @@ function body(
   return base;
 }
 
+/** The provider's error code and message, short, for the logs (never the model's output). */
+function errorOf(text: string): string {
+  try {
+    const e = (JSON.parse(text) as { error?: { code?: string; type?: string; message?: string } }).error ?? {};
+    return `${e.code ?? e.type ?? ''} ${(e.message ?? '').slice(0, 160)}`.trim();
+  } catch {
+    return text.slice(0, 120);
+  }
+}
+
 function extractJson(text: string): unknown {
   const trimmed = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '');
   try {
@@ -96,6 +106,7 @@ export async function chatJson(
   let model = llm.model;
   let fallback = opts.fallbackModel && opts.fallbackModel !== llm.model ? opts.fallbackModel : null;
   let mainWait = 0; // what the main model asked us to wait, when we went to the fallback instead
+  let fallbackFails = 0;
   let lastError = '';
   for (const mode of modes) {
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -123,12 +134,16 @@ export async function chatJson(
         continue;
       }
       if (!res.ok && model === fallback) {
-        // the fallback can't answer here (not on this account?): wait for the main model after all
-        console.warn('llm fallback unavailable', model, res.status);
-        await res.body?.cancel();
-        fallback = null;
-        model = llm.model;
-        await new Promise((r) => setTimeout(r, mainWait * 1000));
+        const why = errorOf(await res.text());
+        const missing = res.status === 404 || res.status === 403 || /model_not_found|model_decommissioned|does not exist/i.test(why);
+        console.warn('llm fallback failed', model, res.status, why);
+        if (missing || ++fallbackFails >= 2) {
+          // not on this account, or failing again: wait for the main model after all
+          fallback = null;
+          model = llm.model;
+          await new Promise((r) => setTimeout(r, mainWait * 1000));
+        }
+        // otherwise (a one-off bad answer) ask the fallback once more
         continue;
       }
       if (res.status === 401 || res.status === 403) {
