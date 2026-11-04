@@ -618,7 +618,8 @@ route('POST', '/commitments/check', async (ctx) => {
     if ((until && d > until) || keptDays.has(d)) continue;
     const start = localToUtc(`${d}T${c.start_time}`, tz);
     const end = new Date(start.getTime() + c.duration_min * 60_000);
-    if (end > now) slots.push({ starts_at: start.toISOString(), ends_at: end.toISOString() });
+    // like the generator: a rhythm books only sessions still to start, a commitment any not yet over
+    if (ignoreGoal ? start > now : end > now) slots.push({ starts_at: start.toISOString(), ends_at: end.toISOString() });
   }
   const rows = slots.length
     ? await db.rpc<{ index: number; clash: Record<string, string> | null }[]>('check_slots', {
