@@ -164,7 +164,7 @@ Put exactly one action in "action":
 - move: another time; "date" (YYYY-MM-DD) and "time" (HH:MM, 24-hour). Prefer the free times.
 - skip: not today.
 - done: they already did it.
-- change: any other change to their schedule (add or move something else, change their weekly rhythm): write the whole request in plain English in "request", e.g. "Add gym tomorrow at 7 pm for 1 hour". It is checked and they confirm it next.
+- change: any other change to their schedule (add or move something else, change their weekly rhythm): write the whole request in plain English in "request", e.g. "Add gym tomorrow at 7 pm for 1 hour". It is checked, then saved when they say yes.
 - confirm or cancel: their yes or no to the change that is waiting.
 - none: just talking, or you need to ask something.
 
@@ -172,7 +172,7 @@ Rules:
 - The action you return is carried out at once. So never ask "theek hai?" or "confirm?" about it: say it is done, e.g. "Theek hai, session 9:06 par kar diya."
 - snooze and move move the session itself (not just its reminder).
 - Act only on a clear decision. "Haan", "theek hai", "kar do" right after you suggested something is a clear yes to that suggestion.
-- Any other change they ask for: return "change" straight away with the whole request. Do not ask them to confirm it yourself; it is checked and they are asked once.
+- Any other change they ask for: return "change" straight away, and in "reply" ask once if you should save it, e.g. "Kal shaam 7 baje gym, ek ghante ke liye, add kar doon?". If it can't be done you will be told why.
 - If they are vague ("dekhta hoon", "pata nahi"), suggest one concrete option (start now, or one free time) and ask.
 - After an action, say in a few words that it is done and end the call warmly (end_call true), unless they want something else.
 - end_call true when they say bye, are busy, or want to hang up: say a short goodbye.
@@ -288,7 +288,10 @@ export async function runCallAction(a: CallAction, input: ActionInput): Promise<
   }
 }
 
-/** Any other change: the assistant plans it; a ready plan waits for their yes. */
+/**
+ * Any other change: the assistant plans and checks it. A ready plan waits for their yes
+ * (the agent's own line asks); a clash or an open question goes back to the agent to explain.
+ */
 async function planChange(request: string, input: ActionInput): Promise<Outcome> {
   const { db, state, now } = input;
   const tz = state.profile.timezone;
@@ -306,20 +309,24 @@ async function planChange(request: string, input: ActionInput): Promise<Outcome>
     checks: actions,
   });
   const changes = actions.filter((x) => (MUTATING_TYPES as string[]).includes(x.type));
-  const open = actions.find((x) => x.status === 'needs_answer' || x.status === 'clash');
-  const reply = plan.reply_text;
-  const voice = plan.reply_tts || plan.reply_text;
+  const open = actions.find((x) => x.status === 'needs_answer' || x.status === 'clash' || x.status === 'invalid');
   if (open) {
-    const q = open.status === 'needs_answer' ? open.question ?? '' : open.note ?? '';
-    return { ok: true, changed: false, say: { text: `${reply} ${q}`.trim(), voice: `${voice} ${q}`.trim() }, pending: null };
+    const why = open.status === 'needs_answer'
+      ? `it needs one more detail: ${open.question ?? open.summary}`
+      : `${open.summary}: ${open.note ?? 'that time is taken'}`;
+    return { ok: false, changed: false, problem: why, pending: null };
   }
-  if (changes.length === 0) return { ok: true, changed: false, say: { text: reply, voice }, pending: null };
-  const ask = romanUrdu ? { text: 'Kar doon?', voice: 'کر دوں؟' } : { text: 'Shall I do that?', voice: 'Shall I do that?' };
+  if (changes.length === 0) {
+    // nothing to change (a question about their week): the assistant's answer is the reply
+    return { ok: true, changed: false, say: { text: plan.reply_text, voice: plan.reply_tts || plan.reply_text }, pending: null };
+  }
   return {
     ok: true,
     changed: false,
-    say: { text: `${reply} ${ask.text}`, voice: `${voice} ${ask.voice}` },
-    pending: { run_id: run.id, summary: changes.map((x) => x.summary).join('; ') },
+    pending: {
+      run_id: run.id,
+      summary: changes.map((x) => `${x.summary}${x.when ? ` (${x.when})` : ''}`).join('; '),
+    },
   };
 }
 
