@@ -14,13 +14,14 @@ import { makeState, NOW, S_SUN25 } from './fixtures.ts';
 // The call is about Sunday's Cloud lab at 18:00, 45 minutes after NOW (17:15 Karachi).
 const action = (a: Partial<CallAction>): CallAction => ({ type: 'none', minutes: null, date: null, time: null, request: null, ...a });
 
-function fakeCallDb(opts: { clash?: boolean } = {}) {
+function fakeCallDb(opts: { clash?: boolean; free?: string[] } = {}) {
   const calls: { fn: string; args: Record<string, unknown> }[] = [];
   return {
     calls,
     // deno-lint-ignore require-await
     async rpc<T>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
       calls.push({ fn, args });
+      if (fn === 'free_slots') return (opts.free ?? []).map((starts_at) => ({ starts_at })) as T;
       if (fn === 'block_action' && opts.clash && (args.p_action === 'move' || args.p_action === 'snooze')) {
         throw new HttpError(409, 'clash', 'That time is taken.', {
           with: { title: 'Training class', starts_at: '2026-10-26T09:00:00Z', ends_at: '2026-10-26T12:00:00Z' },
@@ -104,11 +105,21 @@ Deno.test('another time is local time; a taken time comes back as a problem to e
   assertEquals(out.ok, true);
   assertEquals(db.calls[0].args, { p_id: block.id, p_action: 'move', p: { starts_at: '2026-10-25T16:30:00.000Z' } });
 
-  const busy = fakeCallDb({ clash: true });
+  // 10:00 Karachi tomorrow is taken: the agent hears what, and the free times just before and after
+  const busy = fakeCallDb({
+    clash: true,
+    free: ['2026-10-26T03:00:00Z', '2026-10-26T04:00:00Z', '2026-10-26T06:00:00Z', '2026-10-26T07:00:00Z'],
+  });
   const clash = await runCallAction(action({ type: 'move', date: '2026-10-26', time: '10:00' }), { db: busy, state, block, now: NOW });
   assertEquals(clash.ok, false);
   assertEquals(clash.changed, false);
-  assertStringIncludes(clash.problem ?? '', 'Training class');
+  assertEquals(clash.problem, 'that time is taken by Training class (tomorrow 14:00–17:00); free near then: tomorrow 09:00, tomorrow 11:00');
+  const asked = busy.calls.find((c) => c.fn === 'free_slots')!.args;
+  assertEquals([asked.p_duration_min, asked.p_ignore, asked.p_step_min], [60, block.id, 15]);
+
+  // nothing free nearby: just the clash
+  const full = await runCallAction(action({ type: 'move', date: '2026-10-26', time: '10:00' }), { db: fakeCallDb({ clash: true }), state, block, now: NOW });
+  assertEquals(full.problem, 'that time is taken by Training class (tomorrow 14:00–17:00)');
 
   const missing = await runCallAction(action({ type: 'move', date: '2026-10-26' }), { db, state, block, now: NOW });
   assertEquals(missing.ok, false);

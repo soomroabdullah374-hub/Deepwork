@@ -2,7 +2,7 @@
 // strict JSON schema, temperature 0, Zod validation, one retry with the validation
 // error, then a polite "say it again" if the second answer is still unusable.
 
-import { type ChatMessage, chatJson } from './llm.ts';
+import { type ChatMessage, chatJson, type ChatOptions } from './llm.ts';
 import { buildSystemPrompt, type PromptContext } from './prompt.ts';
 import { describeIssues, type Plan, PLAN_JSON_SCHEMA, PlanSchema } from './schema.ts';
 import type { Block, Commitment, Goal } from '../state.ts';
@@ -143,6 +143,7 @@ export async function planWithLlm(
   text: string,
   ctx: PromptContext,
   history: ChatMessage[] = [],
+  opts: ChatOptions = {},
 ): Promise<PlanResult> {
   let messages: ChatMessage[] = [
     { role: 'system', content: buildSystemPrompt(ctx) },
@@ -153,7 +154,7 @@ export async function planWithLlm(
   let model: string | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     // Provider errors (no key, rejected key, outage) go to the app as they are.
-    const out = await chatJson(messages, PLAN_JSON_SCHEMA as unknown as Record<string, unknown>, 'deepwork_plan');
+    const out = await chatJson(messages, PLAN_JSON_SCHEMA as unknown as Record<string, unknown>, 'deepwork_plan', opts);
     raw = out.data;
     model = out.model;
     const parsed = PlanSchema.safeParse(out.data);

@@ -6,11 +6,12 @@
 // conversation and sends it back every turn, so the server stores nothing about the call.
 
 import { z } from 'npm:zod@3.25.76';
+import { config } from '../env.ts';
 import { HttpError } from '../http.ts';
 import type { Db } from '../neon.ts';
 import type { AppState, Block } from '../state.ts';
 import { addDays, daysBetween, localDate, localTime, localToUtc, minutesBetween, weekdayOf, WEEKDAYS_LONG } from '../time.ts';
-import { type ChatMessage, chatJson } from './llm.ts';
+import { type ChatMessage, chatJson, type ChatOptions } from './llm.ts';
 import { planWithLlm, promptContext } from './planner.ts';
 import { MUTATING_TYPES, resolvePlan } from './resolve.ts';
 
@@ -156,6 +157,7 @@ Put exactly one action in "action":
 Rules:
 - The action you return is carried out at once. So never ask "theek hai?" or "confirm?" about it: say it is done, e.g. "Theek hai, session 9:06 par kar diya."
 - snooze and move move the session itself (not just its reminder).
+- Two things can't be at the same time: never suggest or agree to a time that is taken on their calendar.
 - Act only on a clear decision. "Haan", "theek hai", "kar do" right after you suggested something is a clear yes to that suggestion.
 - Any other change they ask for: first ask once if you should do it (action none), e.g. "Kal shaam 7 baje gym, ek ghante ke liye, add kar doon?". When they say yes, return "change" and say it is done. If it can't be done you will be told why.
 - If they are vague ("dekhta hoon", "pata nahi"), suggest one concrete option (start now, or one free time) and ask.
@@ -171,13 +173,21 @@ export function callUserMessage(history: CallLine[], said: string | null): strin
   return `${lines ? `The call so far:\n${lines}\n\n` : ''}They now say: "${said ?? ''}"`;
 }
 
+/** Someone is on the phone: never wait out a rate limit when another model can answer. */
+const onTheLine = (opts: ChatOptions = {}): ChatOptions => ({ fallbackModel: config.llm.fallbackModel, ...opts });
+
 export async function callReply(c: CallContext, history: CallLine[], said: string | null, note?: string): Promise<CallReply> {
   const messages: ChatMessage[] = [
     { role: 'system', content: callSystemPrompt(c) },
     { role: 'user', content: callUserMessage(history, said) },
   ];
   if (note) messages.push({ role: 'user', content: note });
-  const out = await chatJson(messages, CALL_JSON_SCHEMA as unknown as Record<string, unknown>, 'deepwork_call', { reasoningEffort: 'low' });
+  const out = await chatJson(
+    messages,
+    CALL_JSON_SCHEMA as unknown as Record<string, unknown>,
+    'deepwork_call',
+    onTheLine({ reasoningEffort: 'low', maxTokens: 1500 }),
+  );
   const parsed = CallReplySchema.safeParse(out.data);
   if (!parsed.success || !parsed.data.reply) throw new HttpError(502, 'ai_failed', 'The call agent could not answer.');
   return parsed.data;
@@ -201,11 +211,14 @@ interface ClashDetail {
   ends_at?: string;
 }
 
-function problemOf(err: unknown, tz: string): string {
+function problemOf(err: unknown, tz: string, today: string): string {
   if (err instanceof HttpError) {
     const w = (err.extra?.with ?? null) as ClashDetail | null;
     if (err.code === 'clash' && w?.title) {
-      return `that time is taken by ${w.title}${w.starts_at && w.ends_at ? ` (${localTime(w.starts_at, tz)}–${localTime(w.ends_at, tz)})` : ''}`;
+      const when = w.starts_at && w.ends_at
+        ? ` (${dayWord(localDate(w.starts_at, tz), today)} ${localTime(w.starts_at, tz)}–${localTime(w.ends_at, tz)})`
+        : '';
+      return `that time is taken by ${w.title}${when}`;
     }
     return err.message;
   }
@@ -222,8 +235,9 @@ export interface ActionInput {
 const LIVE = new Set<Block['status']>(['planned', 'snoozed', 'missed']);
 
 export async function runCallAction(a: CallAction, input: ActionInput): Promise<Outcome> {
-  const { db, state, block } = input;
+  const { db, state, block, now } = input;
   const tz = state.profile.timezone;
+  const today = localDate(now, tz);
   const blockAction = (action: string, p: Record<string, unknown> = {}) =>
     db.rpc('block_action', { p_id: block.id, p_action: action, p });
   const done = (changed = true): Outcome => ({ ok: true, changed });
@@ -238,7 +252,15 @@ export async function runCallAction(a: CallAction, input: ActionInput): Promise<
         return done();
       case 'move': {
         if (!a.date || !a.time) return { ok: false, changed: false, problem: 'the day or time was missing' };
-        await blockAction('move', { starts_at: localToUtc(`${a.date}T${a.time}`, tz).toISOString() });
+        const at = localToUtc(`${a.date}T${a.time}`, tz);
+        try {
+          await blockAction('move', { starts_at: at.toISOString() });
+        } catch (err) {
+          // say what is free just before and after the time they asked for
+          const near = await freeNear(input, at);
+          const problem = problemOf(err, tz, today);
+          return { ok: false, changed: false, problem: near.length ? `${problem}; free near then: ${near.join(', ')}` : problem };
+        }
         return done();
       }
       case 'skip':
@@ -253,7 +275,31 @@ export async function runCallAction(a: CallAction, input: ActionInput): Promise<
         return done(false);
     }
   } catch (err) {
-    return { ok: false, changed: false, problem: problemOf(err, tz) };
+    return { ok: false, changed: false, problem: problemOf(err, tz, today) };
+  }
+}
+
+/** The free start closest before and closest after a time, for a session this long. */
+async function freeNear({ db, state, block, now }: ActionInput, at: Date): Promise<string[]> {
+  const tz = state.profile.timezone;
+  const hour = 3_600_000;
+  try {
+    const slots = await db.rpc<{ starts_at: string }[]>('free_slots', {
+      p_duration_min: Math.round(minutesBetween(block.starts_at, block.ends_at)),
+      p_from: new Date(Math.max(now.getTime(), at.getTime() - 4 * hour)).toISOString(),
+      p_to: new Date(at.getTime() + 5 * hour).toISOString(),
+      p_limit: 60,
+      p_ignore: block.id,
+      p_step_min: 15,
+    });
+    if (!Array.isArray(slots)) return [];
+    const times = slots.map((s) => new Date(s.starts_at)).filter((d) => !Number.isNaN(d.getTime()));
+    const before = times.filter((d) => d < at).sort((x, y) => y.getTime() - x.getTime())[0];
+    const after = times.filter((d) => d > at).sort((x, y) => x.getTime() - y.getTime())[0];
+    const today = localDate(now, tz);
+    return [before, after].filter((d): d is Date => !!d).map((d) => `${dayWord(localDate(d, tz), today)} ${localTime(d, tz)}`);
+  } catch {
+    return [];
   }
 }
 
@@ -269,6 +315,8 @@ async function planChange(request: string, input: ActionInput): Promise<Outcome>
   const { plan } = await planWithLlm(
     request,
     promptContext({ tz, now, goals: state.goals, commitments: state.commitments, blocks: state.blocks, romanUrdu }),
+    [],
+    onTheLine(),
   );
   const actions = await resolvePlan(plan, { state, tz, now }, db);
   const run = await db.insert<{ id: string }>('assistant_runs', {

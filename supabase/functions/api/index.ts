@@ -950,9 +950,15 @@ route('POST', '/call/turn', async (ctx) => {
         context,
         history,
         said || null,
-        `Note: your action "${failed}" could not be done: ${outcome.problem}. Tell them briefly and offer another option. Use action "none" unless they already chose something that works.`,
+        `Note: your action "${failed}" was NOT done, and it can't be done like that: ${outcome.problem}. Don't offer that again. In one or two short sentences say why and suggest one option that works (a free time, if there is one), then wait for their answer: action "none", end_call false. Only if they already chose something else that works, do that instead.`,
       );
-      outcome = reply.action.type === 'none' ? { ...outcome, ok: true } : await runCallAction(reply.action, { db, state, block, now });
+      if (reply.action.type === 'none') {
+        // they have a question to answer now: stay on the line
+        reply = { ...reply, end_call: false };
+        outcome = { ...outcome, ok: true };
+      } else {
+        outcome = await runCallAction(reply.action, { db, state, block, now });
+      }
     } catch {
       // keep the first reply's problem
     }

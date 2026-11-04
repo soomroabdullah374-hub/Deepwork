@@ -23,12 +23,31 @@ export class LlmNotConfigured extends HttpError {
 export interface ChatOptions {
   /** Less thinking for quick turns (a phone call); defaults to LLM_REASONING_EFFORT. */
   reasoningEffort?: 'low' | 'medium' | 'high';
+  /**
+   * Someone is waiting on the phone: when the main model is rate limited, ask this model
+   * at once (it has its own limit) instead of waiting for the limit to reset.
+   */
+  fallbackModel?: string;
+  /** Cap on the answer, thinking included (default 4096). */
+  maxTokens?: number;
 }
 
-function body(mode: Mode, messages: ChatMessage[], schema: Record<string, unknown>, name: string, opts: ChatOptions) {
+function body(
+  mode: Mode,
+  model: string,
+  messages: ChatMessage[],
+  schema: Record<string, unknown>,
+  name: string,
+  opts: ChatOptions,
+) {
   const llm = config.llm;
   // Reasoning tokens count toward the limit, so leave room for them.
-  const base: Record<string, unknown> = { model: llm.model, messages, temperature: 0, max_completion_tokens: 4096 };
+  const base: Record<string, unknown> = {
+    model,
+    messages,
+    temperature: 0,
+    max_completion_tokens: opts.maxTokens ?? 4096,
+  };
   if (mode === 'schema_strict_reasoning' || mode === 'schema_strict') {
     base.response_format = { type: 'json_schema', json_schema: { name, schema, strict: true } };
   }
@@ -74,6 +93,9 @@ export async function chatJson(
   const llm = config.llm;
   if (!llm.apiKey) throw new LlmNotConfigured();
   const modes = preferredMode ? [preferredMode, ...MODES.filter((m) => m !== preferredMode)] : MODES;
+  let model = llm.model;
+  let fallback = opts.fallbackModel && opts.fallbackModel !== llm.model ? opts.fallbackModel : null;
+  let mainWait = 0; // what the main model asked us to wait, when we went to the fallback instead
   let lastError = '';
   for (const mode of modes) {
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -82,15 +104,31 @@ export async function chatJson(
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${llm.apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(body(mode, messages, schema, name, opts)),
+          body: JSON.stringify(body(mode, model, messages, schema, name, opts)),
         },
         60_000,
       );
       if (res.status === 429) {
-        // rate limited: wait as told (capped) and try the same mode again
         const wait = Math.min(Number(res.headers.get('retry-after') ?? '2') || 2, 20);
+        console.warn('llm rate limited', model, `retry-after ${wait}s`, `tokens left ${res.headers.get('x-ratelimit-remaining-tokens') ?? '?'}`);
         await res.body?.cancel();
+        if (fallback && model !== fallback) {
+          // someone is waiting: the fallback model has its own limit, so ask it now
+          mainWait = wait;
+          model = fallback;
+          continue;
+        }
+        // otherwise wait as told (capped) and try the same mode again
         await new Promise((r) => setTimeout(r, wait * 1000));
+        continue;
+      }
+      if (!res.ok && model === fallback) {
+        // the fallback can't answer here (not on this account?): wait for the main model after all
+        console.warn('llm fallback unavailable', model, res.status);
+        await res.body?.cancel();
+        fallback = null;
+        model = llm.model;
+        await new Promise((r) => setTimeout(r, mainWait * 1000));
         continue;
       }
       if (res.status === 401 || res.status === 403) {
@@ -109,7 +147,7 @@ export async function chatJson(
       try {
         const data = extractJson(content);
         preferredMode = mode;
-        return { data, model: out?.model ?? llm.model, mode };
+        return { data, model: out?.model ?? model, mode };
       } catch (err) {
         lastError = `unparseable output: ${(err as Error).message}`;
         break;

@@ -80,6 +80,8 @@ export const config = {
       apiKey: env('LLM_API_KEY'),
       baseUrl: (env('LLM_BASE_URL') ?? d.baseUrl).replace(/\/+$/, ''),
       model: env('LLM_MODEL') ?? d.model,
+      // A live call can't wait out a rate limit; this model has its own limit and answers instead.
+      fallbackModel: env('LLM_FALLBACK_MODEL') ?? (provider === 'groq' ? 'openai/gpt-oss-20b' : undefined),
       reasoningEffort: env('LLM_REASONING_EFFORT') ?? 'medium',
     };
   },
@@ -138,4 +140,4 @@ export const config = {
   },
 };
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.3.1';
