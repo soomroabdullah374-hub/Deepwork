@@ -152,6 +152,7 @@ How you talk:
 - ${lang} If they answer in another language (English or Urdu), switch to theirs.
 - Sound like a warm, caring friend, not a robot or a form. Short natural sentences, no lists, no markdown, no emojis.
 - One or two sentences per reply, at most 25 words. Ask one thing at a time.
+- ${c.romanUrdu ? 'Say times the way people say them: "shaam 7 baje", "raat 8 baje", "subah 9:30 baje", never "20:00".' : 'Say times the way people say them: "7 pm", "8:30 tonight", never "20:00".'}
 - "reply" is what you say. ${voice}
 - "heard" is what they just said, written ${c.romanUrdu ? 'in Roman Urdu' : 'in English'} (fix obvious transcription slips); empty on the first turn.
 
@@ -174,7 +175,7 @@ Rules:
 - snooze and move move the session itself (not just its reminder).
 - Two things can't be at the same time: never suggest a time that is taken on their calendar. If they ask for a specific time, return move with it anyway: it is checked, and if it is taken you will be told what is free near it.
 - A time with no day means the day you were talking about. "Aath baje" while talking about the evening means 20:00; if morning or evening is unclear, ask ("subah ya shaam?").
-- Act only on a clear decision. "Haan", "theek hai", "kar do" right after you suggested something is a clear yes to that suggestion.
+- Act only on a clear decision. "Haan", "theek hai", "kar do" right after you suggested something is a clear yes to that suggestion, and so is repeating it loosely: after you offered tomorrow 20:00, "theek hai, aath baje kar do" means move it to tomorrow 20:00.
 - Any other change they ask for: first ask once if you should do it (action none), e.g. "Kal shaam 7 baje gym, ek ghante ke liye, add kar doon?". When they say yes, return "change" and say it is done. If it can't be done you will be told why.
 - If they are vague ("dekhta hoon", "pata nahi"), suggest one concrete option (start now, or one free time) and ask.
 - After an action, say in a few words that it is done and end the call warmly (end_call true), unless they want something else.
@@ -202,7 +203,8 @@ export async function callReply(c: CallContext, history: CallLine[], said: strin
     messages,
     CALL_JSON_SCHEMA as unknown as Record<string, unknown>,
     'deepwork_call',
-    onTheLine({ reasoningEffort: 'low', maxTokens: 1500 }),
+    // The provider counts the answer cap against its per-minute limit, so keep it close to what a turn needs.
+    onTheLine({ reasoningEffort: 'low', maxTokens: 700 }),
   );
   const parsed = CallReplySchema.safeParse(out.data);
   if (!parsed.success || !parsed.data.reply) throw new HttpError(502, 'ai_failed', 'The call agent could not answer.');
@@ -332,7 +334,8 @@ async function planChange(request: string, input: ActionInput): Promise<Outcome>
     request,
     promptContext({ tz, now, goals: state.goals, commitments: state.commitments, blocks: state.blocks, romanUrdu }),
     [],
-    onTheLine(),
+    // the agent already wrote the request as one plain sentence, so quick thinking is enough
+    onTheLine({ reasoningEffort: 'low', maxTokens: 2000 }),
   );
   const actions = await resolvePlan(plan, { state, tz, now }, db);
   const run = await db.insert<{ id: string }>('assistant_runs', {
