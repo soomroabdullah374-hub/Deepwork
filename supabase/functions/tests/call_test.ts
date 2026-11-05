@@ -252,3 +252,13 @@ Deno.test('a time they asked for is checked by the app, not judged by the agent'
   assertEquals(reply({ asked_date: 'tomorrow', asked_time: '8' }).asked_date, null);
   assertEquals(reply({ asked_time: '8:30' }).asked_time, '08:30');
 });
+
+Deno.test('an English call gets English examples, a Roman Urdu call Roman Urdu ones', () => {
+  const { state, block } = setup();
+  const english = callSystemPrompt(callContext(state, block, NOW, [], ['2026-10-26T20:00']));
+  assertEquals(english.match(/\b(theek hai|kar diya|kar doon|baje|subah|shaam|haan|dekhta|pehla wala)\b/gi), null);
+  assertStringIncludes(english, 'Shall I move it to 8?');
+  const urdu = callSystemPrompt(callContext(setup(true).state, block, NOW, [], ['2026-10-26T20:00']));
+  assertStringIncludes(urdu, 'Theek hai, session 10 minute baad kar diya');
+  assertStringIncludes(urdu, 'subah ya shaam?');
+});

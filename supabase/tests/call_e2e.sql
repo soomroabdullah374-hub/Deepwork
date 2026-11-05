@@ -23,8 +23,10 @@ $$;
 -- one turn, sending back the call's pending state like the app does
 create or replace function pg_temp.turn(p_jwt text, p_block text, p_hist jsonb, p_said text default null, p_pending jsonb default null)
 returns jsonb language plpgsql as $$
-declare r extensions.http_response; t0 timestamptz := clock_timestamp();
+declare r extensions.http_response; t0 timestamptz;
 begin
+  if p_said is not null then perform pg_sleep(3); end if; -- a person answers after a moment
+  t0 := clock_timestamp();
   r := pg_temp.call('POST', 'https://kqlrbkgiedrkhzthbqxk.supabase.co/functions/v1/api/call/turn', p_jwt,
          jsonb_strip_nulls(jsonb_build_object('block_id', p_block, 'history', p_hist, 'said', p_said, 'pending', p_pending)));
   return coalesce(pg_temp.j(r.content), jsonb_build_object('raw', left(r.content, 200)))

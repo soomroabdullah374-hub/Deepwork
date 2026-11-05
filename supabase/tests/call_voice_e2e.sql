@@ -32,8 +32,10 @@ end $$;
 
 create or replace function pg_temp.turn(p_jwt text, p_block text, p_hist jsonb, p_audio text default null)
 returns jsonb language plpgsql as $$
-declare r extensions.http_response; t0 timestamptz := clock_timestamp();
+declare r extensions.http_response; t0 timestamptz;
 begin
+  if p_audio is not null then perform pg_sleep(3); end if; -- a person answers after a moment
+  t0 := clock_timestamp();
   r := pg_temp.call('POST', 'https://kqlrbkgiedrkhzthbqxk.supabase.co/functions/v1/api/call/turn', p_jwt,
          jsonb_strip_nulls(jsonb_build_object('block_id', p_block, 'history', p_hist, 'audio', p_audio,
                                               'mime', case when p_audio is null then null else 'audio/mp4' end)));
@@ -101,8 +103,9 @@ begin
     r := pg_temp.call('GET', v_api || '/blocks?goal=' || v_goal, v_jwt);
     select (x ->> 'starts_at')::timestamptz into v_after from jsonb_array_elements(pg_temp.j(r.content)) x where x ->> 'id' = v_block;
     step := '2 voice: "Can we do it ten minutes later?"'; ms := (b ->> '_ms')::int;
-    ok := b ->> 'heard' ~* '(ten|10) minutes' and b -> 'action' ->> 'type' = 'snooze' and (b ->> 'changed')::boolean
-          and v_after = v_before + interval '10 minutes';
+    -- ten minutes later, by a snooze or a move to that time, and said in English
+    ok := b ->> 'heard' ~* '(ten|10) minutes' and b -> 'action' ->> 'type' in ('snooze', 'move') and (b ->> 'changed')::boolean
+          and v_after = v_before + interval '10 minutes' and b -> 'reply' ->> 'text' !~* '\m(theek|kar diya|baje|session ko)\M';
     info := format('heard "%s" → %s [%s] | plan %s → %s', b ->> 'heard', b -> 'reply' ->> 'text', b -> 'action' ->> 'type',
                    to_char(v_before at time zone 'Asia/Karachi', 'HH24:MI'), to_char(v_after at time zone 'Asia/Karachi', 'HH24:MI'));
     return next;
