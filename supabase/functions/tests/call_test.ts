@@ -1,6 +1,9 @@
 import { assert, assertEquals, assertStringIncludes } from 'jsr:@std/assert@1';
 import {
+  actionKey,
   askedMove,
+  doneFrom,
+  holdRepeat,
   type CallAction,
   callContext,
   CallReplySchema,
@@ -261,4 +264,22 @@ Deno.test('an English call gets English examples, a Roman Urdu call Roman Urdu o
   const urdu = callSystemPrompt(callContext(setup(true).state, block, NOW, [], ['2026-10-26T20:00']));
   assertStringIncludes(urdu, 'Theek hai, session 10 minute baad kar diya');
   assertStringIncludes(urdu, 'subah ya shaam?');
+});
+
+Deno.test('nothing is done twice in one call because they said "theek hai"', () => {
+  const done = doneFrom({ run_id: '', summary: '', offered: [], done: ['snooze', 'add@gym@2026-10-26T19:00', 7] });
+  assertEquals(done, ['snooze', 'add@gym@2026-10-26T19:00']);
+  assertEquals(doneFrom(null), []);
+  const snooze = action({ type: 'snooze', minutes: 10 });
+  assertEquals(holdRepeat(snooze, done, 'Theek hai').type, 'none');
+  assertEquals(holdRepeat(snooze, done, 'theek hai, kar do').type, 'none');
+  // but more time is more time
+  assertEquals(holdRepeat(snooze, done, 'aur das minute de do').type, 'snooze');
+  assertEquals(holdRepeat(snooze, done, 'give me 10 more minutes').type, 'snooze');
+  // the same gym again is held; a different change goes ahead
+  const gym = action({ type: 'add', title: 'Gym', date: '2026-10-26', time: '19:00' });
+  assertEquals(actionKey(gym), 'add@gym@2026-10-26T19:00');
+  assertEquals(holdRepeat(gym, done, 'haan').type, 'none');
+  assertEquals(holdRepeat(action({ type: 'move', date: '2026-10-26', time: '20:00' }), done, 'haan').type, 'move');
+  assertEquals(holdRepeat(action({ type: 'start' }), [], 'haan').type, 'start');
 });

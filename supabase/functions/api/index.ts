@@ -67,8 +67,11 @@ import {
   type CallLine,
   type CallReply,
   callReply,
+  actionKey,
   askedMove,
+  doneFrom,
   fallbackLine,
+  holdRepeat,
   matchOffered,
   offeredFrom,
   pickFreeTimes,
@@ -944,13 +947,14 @@ route('POST', '/call/turn', async (ctx) => {
     .catch(() => []);
   // times offered on the last turn: the app keeps the call's pending state and sends it back
   const offered = offeredFrom(body.pending);
+  const done = doneFrom(body.pending); // what this call already changed
   const context = callContext(state, block, now, pickFreeTimes(free.map((f) => f.starts_at), block), offered);
 
   let reply: CallReply;
   let checked = false; // the agent didn't move it, so the app is checking the time they asked for
   try {
     reply = await callReply(context, history, said || null);
-    reply = { ...reply, action: matchOffered(reply.action, offered, said || null) };
+    reply = { ...reply, action: holdRepeat(matchOffered(reply.action, offered, said || null), done, said || null) };
     const asked = askedMove(reply, offered, said || null);
     if (asked) {
       reply = { ...reply, action: asked };
@@ -1021,11 +1025,18 @@ route('POST', '/call/turn', async (ctx) => {
       time: reply.action.time ?? null,
     },
     changed: outcome.changed,
-    // the free times just offered, so a bare "aath baje" next turn means one of them
-    pending: !outcome.changed && offeredNext.length ? { run_id: '', summary: '', offered: offeredNext } : null,
+    // kept by the app until the next turn: the free times just offered (so a bare "aath
+    // baje" means one of them) and what this call already changed (so "theek hai" doesn't
+    // change it again)
+    pending: pendingNext(outcome.changed ? [] : offeredNext, outcome.changed ? actionKey(reply.action) : null, done),
     end_call: reply.end_call,
   });
 });
+
+function pendingNext(offered: string[], doneNow: string | null, done: string[]) {
+  const all = doneNow ? [...done, doneNow] : done;
+  return offered.length || all.length ? { run_id: '', summary: '', offered, done: all } : null;
+}
 
 async function speakRoute(ctx: Ctx, text: string, language: string): Promise<Response> {
   await requireUser(ctx.req);

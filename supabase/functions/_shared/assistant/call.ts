@@ -237,6 +237,42 @@ export function matchOffered(a: CallAction, offered: string[], said: string | nu
   return hits.length === 1 ? { ...a, date: hits[0].slice(0, 10), time: hits[0].slice(11) } : a;
 }
 
+/** What was already done on this call (action keys), from the pending state the app sends back. */
+export function doneFrom(pending: unknown): string[] {
+  const list = (pending as { done?: unknown } | null)?.done;
+  return Array.isArray(list) ? list.filter((d): d is string => typeof d === 'string' && d.length <= 120).slice(-20) : [];
+}
+
+/** The same key twice means the same change twice. */
+export function actionKey(a: CallAction): string | null {
+  switch (a.type) {
+    case 'start':
+    case 'skip':
+    case 'done':
+    case 'snooze':
+      return a.type;
+    case 'move':
+      return a.date && a.time ? `move@${a.date}T${a.time}` : null;
+    case 'add':
+      return a.title && a.date && a.time ? `add@${a.title.toLowerCase()}@${a.date}T${a.time}` : null;
+    case 'change':
+      return a.request ? `change@${a.request.toLowerCase().slice(0, 100)}` : null;
+    default:
+      return null;
+  }
+}
+
+// A number or "again": they did ask for more ("aur das minute", "10 more minutes", "phir se").
+const AGAIN = /\d|\b(das|paanch|panch|pandrah|bees|tees|aadha|aadhe|five|ten|fifteen|twenty|thirty|again|more|phir|dobara)\b/i;
+
+/** "Theek hai" after a snooze is not another snooze: nothing is done twice in one call. */
+export function holdRepeat(a: CallAction, done: string[], said: string | null): CallAction {
+  const key = actionKey(a);
+  if (!key || !done.includes(key)) return a;
+  if (a.type === 'snooze' && said && AGAIN.test(said)) return a;
+  return { ...a, type: 'none' };
+}
+
 /**
  * They asked for the session at a time and the agent didn't move it (often because it
  * thought the time was taken, and it is bad at working that out): the app checks that
