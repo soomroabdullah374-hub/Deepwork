@@ -32,7 +32,8 @@ const SAVED: Record<string, string> = {
   move: 'Moved',
   skip: 'Skipped today',
   done: 'Marked done',
-  confirm: 'Change saved',
+  add: 'Added',
+  change: 'Change saved',
 };
 
 function Ring({ delay }: { delay: number }) {

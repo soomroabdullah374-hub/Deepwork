@@ -200,9 +200,14 @@ export interface CallLine {
 }
 
 /** A change planned on the call, waiting for their yes. */
+/** Kept by the app between turns and sent back as it came; the server reads it. */
 export interface CallPending {
   run_id: string;
   summary: string;
+  /** Free times just offered ("YYYY-MM-DDTHH:MM"), so "aath baje" means one of them. */
+  offered?: string[];
+  /** What this call already changed, so "theek hai" doesn't change it again. */
+  done?: string[];
 }
 
 export interface CallTurn {
@@ -211,7 +216,7 @@ export interface CallTurn {
   /** Nothing that sounded like words. */
   silent?: boolean;
   reply?: { text: string; voice: string; language: 'en' | 'ur-Latn' };
-  action?: { type: string; ok: boolean };
+  action?: { type: string; ok: boolean; minutes?: number | null; date?: string | null; time?: string | null };
   changed?: boolean;
   pending: CallPending | null;
   end_call?: boolean;
