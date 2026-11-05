@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from 'jsr:@std/assert@1';
 import {
+  askedMove,
   type CallAction,
   callContext,
   CallReplySchema,
@@ -231,4 +232,23 @@ Deno.test('the times just offered are in the prompt', () => {
   assertEquals(c.offered, ['tomorrow 18:00', 'tomorrow 20:00']);
   assertStringIncludes(callSystemPrompt(c), 'You just offered: tomorrow 18:00, tomorrow 20:00.');
   assert(!callSystemPrompt({ ...c, offered: [] }).includes('You just offered'));
+});
+
+Deno.test('a time they asked for is checked by the app, not judged by the agent', () => {
+  const reply = (over: Record<string, unknown>) =>
+    CallReplySchema.parse({ heard: '', reply: '8 baje free nahi, 9 baje?', reply_voice: '', action: action({}), end_call: false, ...over });
+  // the agent wrongly thought 8 pm was taken: the app tries it
+  assertEquals(askedMove(reply({ asked_date: '2026-10-26', asked_time: '20:00' }), [], 'kal aath baje kar do'), action({ type: 'move', date: '2026-10-26', time: '20:00' }));
+  // a bare "aath baje" after offering 6 or 8 pm tomorrow is the 8 pm offered
+  assertEquals(
+    askedMove(reply({ asked_date: '2026-10-25', asked_time: '8:00' }), ['2026-10-26T18:00', '2026-10-26T20:00'], 'aath baje kar do'),
+    action({ type: 'move', date: '2026-10-26', time: '20:00' }),
+  );
+  // nothing asked, or the agent already acted: nothing to check
+  assertEquals(askedMove(reply({}), [], 'theek hai'), null);
+  assertEquals(askedMove(reply({ asked_date: '2026-10-26', asked_time: null }), [], 'kal'), null);
+  assertEquals(askedMove(reply({ asked_date: '2026-10-26', asked_time: '20:00', action: action({ type: 'move', date: '2026-10-26', time: '20:00' }) }), [], 'x'), null);
+  // what the model reports is cleaned like the rest of its answer
+  assertEquals(reply({ asked_date: 'tomorrow', asked_time: '8' }).asked_date, null);
+  assertEquals(reply({ asked_time: '8:30' }).asked_time, '08:30');
 });

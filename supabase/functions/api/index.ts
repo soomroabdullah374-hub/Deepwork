@@ -67,6 +67,7 @@ import {
   type CallLine,
   type CallReply,
   callReply,
+  askedMove,
   fallbackLine,
   matchOffered,
   offeredFrom,
@@ -946,9 +947,15 @@ route('POST', '/call/turn', async (ctx) => {
   const context = callContext(state, block, now, pickFreeTimes(free.map((f) => f.starts_at), block), offered);
 
   let reply: CallReply;
+  let checked = false; // the agent didn't move it, so the app is checking the time they asked for
   try {
     reply = await callReply(context, history, said || null);
     reply = { ...reply, action: matchOffered(reply.action, offered, said || null) };
+    const asked = askedMove(reply, offered, said || null);
+    if (asked) {
+      reply = { ...reply, action: asked };
+      checked = true;
+    }
   } catch (err) {
     if (err instanceof HttpError && (err.code === 'ai_not_configured' || err.code === 'ai_auth')) throw err;
     const line = fallbackLine(romanUrdu);
@@ -956,6 +963,22 @@ route('POST', '/call/turn', async (ctx) => {
   }
   let outcome = await runCallAction(reply.action, { db, state, block, now });
   const offeredNext = outcome.offered ?? [];
+  if (checked && outcome.changed) {
+    // the time they asked for was free after all: say it's done, not what the agent thought
+    const moved = reply.action;
+    try {
+      const said2 = await callReply(
+        context,
+        history,
+        said || null,
+        `Note: they asked for ${moved.date} ${moved.time}; that time was free, so the session HAS been moved there. Say in a few words that it is done (action none).`,
+      );
+      reply = { ...said2, action: moved };
+    } catch {
+      const line = romanUrdu ? 'Theek hai, session wahan kar diya.' : "Done, I've moved the session there.";
+      reply = { ...reply, reply: line, reply_voice: romanUrdu ? 'ٹھیک ہے، سیشن وہاں کر دیا۔' : line };
+    }
+  }
   if (!outcome.ok && outcome.problem) {
     // Tell the agent what went wrong: it explains, or picks something that works.
     const failed = reply.action.type;

@@ -29,9 +29,11 @@ const nullable = (schema: Record<string, unknown>) => ({ anyOf: [schema, { type:
 export const CALL_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['heard', 'reply', 'reply_voice', 'action', 'end_call'],
+  required: ['heard', 'asked_date', 'asked_time', 'reply', 'reply_voice', 'action', 'end_call'],
   properties: {
     heard: { type: 'string' },
+    asked_date: nullable({ type: 'string' }),
+    asked_time: nullable({ type: 'string' }),
     reply: { type: 'string' },
     reply_voice: { type: 'string' },
     action: {
@@ -53,8 +55,12 @@ export const CALL_JSON_SCHEMA = {
 
 const text = (max: number) => z.string().catch('').transform((s) => s.trim().slice(0, max));
 
+const clock = z.string().regex(/^\d{1,2}:\d{2}/).transform((t) => t.padStart(5, '0').slice(0, 5));
+
 export const CallReplySchema = z.object({
   heard: text(300).default(''),
+  asked_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish().catch(null),
+  asked_time: clock.nullish().catch(null),
   reply: text(400),
   reply_voice: text(400).default(''),
   action: z
@@ -62,7 +68,7 @@ export const CallReplySchema = z.object({
       type: z.enum(CALL_ACTIONS).catch('none'),
       minutes: z.number().int().nullish().catch(null),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish().catch(null),
-      time: z.string().regex(/^\d{1,2}:\d{2}/).transform((t) => t.padStart(5, '0').slice(0, 5)).nullish().catch(null),
+      time: clock.nullish().catch(null),
       title: z.string().transform((t) => t.trim().slice(0, 80)).nullish().catch(null),
       request: z.string().nullish().catch(null),
     })
@@ -164,6 +170,7 @@ How you talk:
 - ${c.romanUrdu ? 'Say times the way people say them: "shaam 7 baje", "raat 8 baje", "subah 9:30 baje", never "20:00".' : 'Say times the way people say them: "7 pm", "8:30 tonight", never "20:00".'}
 - "reply" is what you say. ${voice}
 - "heard" is what they just said, written ${c.romanUrdu ? 'in Roman Urdu' : 'in English'} (fix obvious transcription slips); empty on the first turn.
+- "asked_date" and "asked_time": if in their latest words they ask for this session at a specific time ("kal aath baje kar do", "can we do 6?"), that day (YYYY-MM-DD) and time (HH:MM, 24-hour), even if you think it is taken; otherwise null. The app checks that time itself.
 
 The session: "${c.session.title}", ${c.session.when}; it ${until}. Status: ${c.session.status}.
 ${c.session.why ? `Why it matters to them (use it only briefly, to encourage): ${c.session.why}\n` : ''}Now: ${c.now}.
@@ -226,6 +233,16 @@ export function matchOffered(a: CallAction, offered: string[], said: string | nu
     return oh % 12 === h % 12 && om === m;
   });
   return hits.length === 1 ? { ...a, date: hits[0].slice(0, 10), time: hits[0].slice(11) } : a;
+}
+
+/**
+ * They asked for the session at a time and the agent didn't move it (often because it
+ * thought the time was taken, and it is bad at working that out): the app checks that
+ * time itself. Returns the move to try, or null.
+ */
+export function askedMove(r: CallReply, offered: string[], said: string | null): CallAction | null {
+  if (r.action.type !== 'none' || !r.asked_date || !r.asked_time) return null;
+  return matchOffered({ ...r.action, type: 'move', date: r.asked_date, time: r.asked_time }, offered, said);
 }
 
 // "... kar doon?", "Shall I move it?": an offer, not a decision.
