@@ -68,6 +68,8 @@ import {
   type CallReply,
   callReply,
   fallbackLine,
+  matchOffered,
+  offeredFrom,
   pickFreeTimes,
   runCallAction,
 } from '../_shared/assistant/call.ts';
@@ -939,17 +941,21 @@ route('POST', '/call/turn', async (ctx) => {
       p_step_min: 15,
     })
     .catch(() => []);
-  const context = callContext(state, block, now, pickFreeTimes(free.map((f) => f.starts_at), block));
+  // times offered on the last turn: the app keeps the call's pending state and sends it back
+  const offered = offeredFrom(body.pending);
+  const context = callContext(state, block, now, pickFreeTimes(free.map((f) => f.starts_at), block), offered);
 
   let reply: CallReply;
   try {
     reply = await callReply(context, history, said || null);
+    reply = { ...reply, action: matchOffered(reply.action, offered, said || null) };
   } catch (err) {
     if (err instanceof HttpError && (err.code === 'ai_not_configured' || err.code === 'ai_auth')) throw err;
     const line = fallbackLine(romanUrdu);
     return json({ heard: said, reply: { text: line.text, voice: line.voice, language }, changed: false, pending: null, end_call: true });
   }
   let outcome = await runCallAction(reply.action, { db, state, block, now });
+  const offeredNext = outcome.offered ?? [];
   if (!outcome.ok && outcome.problem) {
     // Tell the agent what went wrong: it explains, or picks something that works.
     const failed = reply.action.type;
@@ -992,7 +998,8 @@ route('POST', '/call/turn', async (ctx) => {
       time: reply.action.time ?? null,
     },
     changed: outcome.changed,
-    pending: null,
+    // the free times just offered, so a bare "aath baje" next turn means one of them
+    pending: !outcome.changed && offeredNext.length ? { run_id: '', summary: '', offered: offeredNext } : null,
     end_call: reply.end_call,
   });
 });

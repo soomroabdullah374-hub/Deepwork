@@ -20,12 +20,13 @@ returns extensions.http_response language sql as $$
     case when p_body is null then null else p_body::text end)::extensions.http_request)
 $$;
 
-create or replace function pg_temp.turn(p_jwt text, p_block text, p_hist jsonb, p_said text default null)
+-- one turn, sending back the call's pending state like the app does
+create or replace function pg_temp.turn(p_jwt text, p_block text, p_hist jsonb, p_said text default null, p_pending jsonb default null)
 returns jsonb language plpgsql as $$
 declare r extensions.http_response; t0 timestamptz := clock_timestamp();
 begin
   r := pg_temp.call('POST', 'https://kqlrbkgiedrkhzthbqxk.supabase.co/functions/v1/api/call/turn', p_jwt,
-         jsonb_strip_nulls(jsonb_build_object('block_id', p_block, 'history', p_hist, 'said', p_said)));
+         jsonb_strip_nulls(jsonb_build_object('block_id', p_block, 'history', p_hist, 'said', p_said, 'pending', p_pending)));
   return coalesce(pg_temp.j(r.content), jsonb_build_object('raw', left(r.content, 200)))
          || jsonb_build_object('_status', r.status, '_ms', (extract(epoch from clock_timestamp() - t0) * 1000)::int);
 end $$;
@@ -59,6 +60,7 @@ declare
   v_hist   jsonb := '[]'::jsonb;
   v_said   text;
   v_added  boolean;
+  v_pend   jsonb;
 begin
   perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '30000');
   v_start := to_char(date_trunc('hour', v_local)
@@ -103,7 +105,7 @@ begin
            'lead_min', 30, 'call_lead_min', 121));
     step := 'a call over 2 hours early is refused'; ok := r.status = 400; info := pg_temp.j(r.content) -> 'error' ->> 'message'; return next;
 
-    b := pg_temp.turn(v_jwt, v_block, v_hist);
+    b := pg_temp.turn(v_jwt, v_block, v_hist); v_pend := b -> 'pending';
     step := '1 DeepWork opens'; ms := (b ->> '_ms')::int;
     ok := (b ->> '_status')::int = 200 and length(b -> 'reply' ->> 'text') > 10 and b -> 'reply' ->> 'language' = 'ur-Latn'
           and not (b ->> 'end_call')::boolean and length(b -> 'reply' ->> 'voice') > 0;
@@ -111,7 +113,7 @@ begin
     v_hist := v_hist || jsonb_build_array(jsonb_build_object('who', 'agent', 'text', b -> 'reply' ->> 'text'));
 
     v_said := 'Abhi thora kaam hai, das minute baad karta hoon';
-    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said);
+    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said, v_pend); v_pend := b -> 'pending';
     v_hist := v_hist || jsonb_build_array(jsonb_build_object('who', 'user', 'text', v_said), jsonb_build_object('who', 'agent', 'text', b -> 'reply' ->> 'text'));
     r := pg_temp.call('GET', v_api || '/blocks?goal=' || v_goal, v_jwt);
     select (x ->> 'starts_at')::timestamptz, x ->> 'status' into v_after, v_status from jsonb_array_elements(pg_temp.j(r.content)) x where x ->> 'id' = v_block;
@@ -122,7 +124,7 @@ begin
 
     -- clear and complete: saved at once and read back, or asked first (both are fine)
     v_said := 'Aur haan, kal shaam saat baje gym bhi add kar do, ek ghante ke liye';
-    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said);
+    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said, v_pend); v_pend := b -> 'pending';
     v_hist := v_hist || jsonb_build_array(jsonb_build_object('who', 'user', 'text', v_said), jsonb_build_object('who', 'agent', 'text', b -> 'reply' ->> 'text'));
     v_added := coalesce((b ->> 'changed')::boolean, false);
     step := '3 "' || v_said || '"'; ms := (b ->> '_ms')::int;
@@ -130,7 +132,7 @@ begin
     info := pg_temp.said(b); return next;
 
     v_said := case when v_added then 'Theek hai' else 'Haan kar do' end;
-    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said);
+    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said, v_pend); v_pend := b -> 'pending';
     v_hist := v_hist || jsonb_build_array(jsonb_build_object('who', 'user', 'text', v_said), jsonb_build_object('who', 'agent', 'text', b -> 'reply' ->> 'text'));
     r := pg_temp.call('GET', v_api || '/blocks?from=' || to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
                       || '&to=' || to_char(now() + interval '3 days', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), v_jwt);
@@ -142,16 +144,17 @@ begin
     info := pg_temp.said(b) || ' | plan: ' || coalesce(v_gym, 'no gym found'); return next;
 
     v_said := 'Acha, aaj wala session bhi kal shaam saat baje kar do';
-    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said);
+    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said, v_pend); v_pend := b -> 'pending';
     v_hist := v_hist || jsonb_build_array(jsonb_build_object('who', 'user', 'text', v_said), jsonb_build_object('who', 'agent', 'text', b -> 'reply' ->> 'text'));
     r := pg_temp.call('GET', v_api || '/blocks?goal=' || v_goal, v_jwt);
     select (x ->> 'starts_at')::timestamptz into v_now from jsonb_array_elements(pg_temp.j(r.content)) x where x ->> 'id' = v_block;
     step := '5 "' || v_said || '" (gym is there)'; ms := (b ->> '_ms')::int;
     ok := not coalesce((b ->> 'changed')::boolean, false) and v_now = v_after and not coalesce((b ->> 'end_call')::boolean, false);
-    info := pg_temp.said(b) || ' | session still ' || to_char(v_now at time zone 'Asia/Karachi', 'HH24:MI'); return next;
+    info := pg_temp.said(b) || ' | session still ' || to_char(v_now at time zone 'Asia/Karachi', 'HH24:MI')
+            || coalesce(' | offered ' || (v_pend -> 'offered')::text, ''); return next;
 
     v_said := 'Theek hai, aath baje kar do';
-    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said);
+    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said, v_pend); v_pend := b -> 'pending';
     v_hist := v_hist || jsonb_build_array(jsonb_build_object('who', 'user', 'text', v_said), jsonb_build_object('who', 'agent', 'text', b -> 'reply' ->> 'text'));
     r := pg_temp.call('GET', v_api || '/blocks?goal=' || v_goal, v_jwt);
     select (x ->> 'starts_at')::timestamptz into v_now from jsonb_array_elements(pg_temp.j(r.content)) x where x ->> 'id' = v_block;
@@ -161,7 +164,7 @@ begin
     info := pg_temp.said(b) || ' | session now ' || to_char(v_now at time zone 'Asia/Karachi', 'Dy DD Mon HH24:MI'); return next;
 
     v_said := 'Shukriya, Allah Hafiz';
-    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said);
+    b := pg_temp.turn(v_jwt, v_block, v_hist, v_said, v_pend); v_pend := b -> 'pending';
     step := '7 "' || v_said || '"'; ms := (b ->> '_ms')::int;
     ok := (b ->> 'end_call')::boolean;
     info := pg_temp.said(b); return next;

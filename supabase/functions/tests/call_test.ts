@@ -5,6 +5,8 @@ import {
   CallReplySchema,
   callSystemPrompt,
   holdOffer,
+  matchOffered,
+  offeredFrom,
   pickFreeTimes,
   callUserMessage,
   runCallAction,
@@ -117,6 +119,7 @@ Deno.test('another time is local time; a taken time comes back as a problem to e
   assertEquals(clash.ok, false);
   assertEquals(clash.changed, false);
   assertEquals(clash.problem, 'that time is taken by Training class (tomorrow 14:00–17:00); free near then: tomorrow 09:00, tomorrow 11:00');
+  assertEquals(clash.offered, ['2026-10-26T09:00', '2026-10-26T11:00']);
   const asked = busy.calls.find((c) => c.fn === 'free_slots')!.args;
   assertEquals([asked.p_duration_min, asked.p_ignore, asked.p_step_min], [60, block.id, 15]);
 
@@ -199,4 +202,33 @@ Deno.test('a reply that offers something waits for the yes', () => {
   assertEquals(holdOffer(reply('Theek hai, kal shaam 8 baje kar diya.', 'move')).action.type, 'move');
   assertEquals(holdOffer(reply('Theek hai, das minute baad kar diya. Aur kuch?', 'snooze')).action.type, 'snooze');
   assertEquals(holdOffer(reply('Theek hai, kal 8 baje kar lete hain.', 'move')).action.type, 'move');
+});
+
+Deno.test('"aath baje" after offering 6 or 8 pm tomorrow is the 8 pm that was offered', () => {
+  const offered = offeredFrom({ run_id: '', summary: '', offered: ['2026-10-26T18:00', '2026-10-26T20:00', 'nonsense', 7] });
+  assertEquals(offered, ['2026-10-26T18:00', '2026-10-26T20:00']);
+  assertEquals(offeredFrom(null), []);
+  assertEquals(offeredFrom({ run_id: 'x' }), []);
+
+  const move = (date: string, time: string) => action({ type: 'move', date, time });
+  // the model put today, or the morning: the 8 o'clock on offer is tomorrow evening
+  assertEquals(matchOffered(move('2026-10-25', '20:00'), offered, 'Theek hai, aath baje kar do'), move('2026-10-26', '20:00'));
+  assertEquals(matchOffered(move('2026-10-26', '08:00'), offered, 'aath baje'), move('2026-10-26', '20:00'));
+  assertEquals(matchOffered(move('2026-10-26', '06:00'), offered, 'chhe baje kar do'), move('2026-10-26', '18:00'));
+  // their own words name the day or the half of the day: they stand
+  assertEquals(matchOffered(move('2026-10-26', '08:00'), offered, 'kal subah aath baje kar do'), move('2026-10-26', '08:00'));
+  assertEquals(matchOffered(move('2026-10-25', '20:00'), offered, 'aaj aath baje'), move('2026-10-25', '20:00'));
+  // nothing offered, no match, two matches, or not a time change: unchanged
+  assertEquals(matchOffered(move('2026-10-25', '20:00'), [], 'aath baje'), move('2026-10-25', '20:00'));
+  assertEquals(matchOffered(move('2026-10-26', '21:00'), offered, 'nau baje'), move('2026-10-26', '21:00'));
+  assertEquals(matchOffered(move('2026-10-26', '08:00'), ['2026-10-26T08:00', '2026-10-27T20:00'], 'aath baje'), move('2026-10-26', '08:00'));
+  assertEquals(matchOffered(action({ type: 'snooze', minutes: 10 }), offered, 'das minute').type, 'snooze');
+});
+
+Deno.test('the times just offered are in the prompt', () => {
+  const { state, block } = setup(true);
+  const c = callContext(state, block, NOW, [], ['2026-10-26T18:00', '2026-10-26T20:00']);
+  assertEquals(c.offered, ['tomorrow 18:00', 'tomorrow 20:00']);
+  assertStringIncludes(callSystemPrompt(c), 'You just offered: tomorrow 18:00, tomorrow 20:00.');
+  assert(!callSystemPrompt({ ...c, offered: [] }).includes('You just offered'));
 });

@@ -85,6 +85,7 @@ export interface CallContext {
   };
   around: string[]; // other blocks today and tomorrow
   freeTimes: string[]; // "today 21:30", "tomorrow 07:00"
+  offered: string[]; // the times the agent just offered, "tomorrow 20:00"
 }
 
 const dayWord = (date: string, today: string) => {
@@ -93,7 +94,7 @@ const dayWord = (date: string, today: string) => {
 };
 
 /** Everything the agent needs to know, in the person's local time. */
-export function callContext(state: AppState, block: Block, now: Date, freeStarts: string[]): CallContext {
+export function callContext(state: AppState, block: Block, now: Date, freeStarts: string[], offered: string[] = []): CallContext {
   const tz = state.profile.timezone;
   const today = localDate(now, tz);
   const goal = state.goals.find((g) => g.id === block.goal_id);
@@ -121,6 +122,7 @@ export function callContext(state: AppState, block: Block, now: Date, freeStarts
     },
     around,
     freeTimes: freeStarts.map((s) => `${dayWord(localDate(s, tz), today)} ${localTime(s, tz)}`),
+    offered: offered.map((o) => `${dayWord(o.slice(0, 10), today)} ${o.slice(11)}`),
   };
 }
 
@@ -166,7 +168,7 @@ How you talk:
 The session: "${c.session.title}", ${c.session.when}; it ${until}. Status: ${c.session.status}.
 ${c.session.why ? `Why it matters to them (use it only briefly, to encourage): ${c.session.why}\n` : ''}Now: ${c.now}.
 Also on their calendar: ${c.around.length ? c.around.join('; ') : 'nothing else today or tomorrow'}.
-Free times for this session: ${c.freeTimes.length ? c.freeTimes.join(', ') : 'none found soon'}.
+Free times for this session: ${c.freeTimes.length ? c.freeTimes.join(', ') : 'none found soon'}.${c.offered.length ? `\nYou just offered: ${c.offered.join(', ')}. If they pick one ("aath baje", "pehla wala"), use exactly that day and time.` : ''}
 
 Put exactly one action in "action":
 - start: they start the session now (or at its time).
@@ -199,6 +201,31 @@ export function callUserMessage(history: CallLine[], said: string | null): strin
   if (!said && history.length === 0) return 'The call was just answered. They have not said anything yet.';
   const lines = history.map((l) => `${l.who === 'agent' ? 'You' : 'They'}: ${l.text}`).join('\n');
   return `${lines ? `The call so far:\n${lines}\n\n` : ''}They now say: "${said ?? ''}"`;
+}
+
+/** The times offered on the last turn, from the call's pending state the app sends back. */
+export function offeredFrom(pending: unknown): string[] {
+  const list = (pending as { offered?: unknown } | null)?.offered;
+  if (!Array.isArray(list)) return [];
+  return list.filter((o): o is string => typeof o === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(o)).slice(0, 4);
+}
+
+// A day or part of the day: then they said which time they mean, so their words stand.
+const WHEN = /\b(aaj|kal|parson|subah|dopahar|dopehar|shaam|sham|raat|today|tomorrow|tonight|morning|afternoon|evening|night|am|pm|monday|tuesday|wednesday|thursday|friday|saturday|sunday|peer|mangal|budh|jumerat|jumma|hafta|itwaar|itwar)\b/i;
+
+/**
+ * "Aath baje kar do" right after offering 6 or 8 pm tomorrow means the 8 pm that was
+ * offered, whatever day or half of the day the model put on it.
+ */
+export function matchOffered(a: CallAction, offered: string[], said: string | null): CallAction {
+  if ((a.type !== 'move' && a.type !== 'add') || !a.time || !offered.length || (said && WHEN.test(said))) return a;
+  if (offered.includes(`${a.date}T${a.time}`)) return a;
+  const [h, m] = a.time.split(':').map(Number);
+  const hits = offered.filter((o) => {
+    const [oh, om] = o.slice(11).split(':').map(Number);
+    return oh % 12 === h % 12 && om === m;
+  });
+  return hits.length === 1 ? { ...a, date: hits[0].slice(0, 10), time: hits[0].slice(11) } : a;
 }
 
 // "... kar doon?", "Shall I move it?": an offer, not a decision.
@@ -239,6 +266,8 @@ export interface Outcome {
   changed: boolean;
   /** Why it could not be done, for the agent to explain. */
   problem?: string;
+  /** Free times offered instead (local "YYYY-MM-DDTHH:MM"), kept by the app for the next turn. */
+  offered?: string[];
   /** Said instead of the agent's line (the assistant's answer to a question about their week). */
   say?: { text: string; voice: string };
 }
@@ -296,8 +325,7 @@ export async function runCallAction(a: CallAction, input: ActionInput): Promise<
         } catch (err) {
           // say what is free just before and after the time they asked for
           const near = await freeNear(input, at, Math.round(minutesBetween(block.starts_at, block.ends_at)), block.id);
-          const problem = problemOf(err, tz, today);
-          return { ok: false, changed: false, problem: near.length ? `${problem}; free near then: ${near.join(', ')}` : problem };
+          return failedWithNear(problemOf(err, tz, today), near);
         }
         return done();
       }
@@ -318,9 +346,7 @@ export async function runCallAction(a: CallAction, input: ActionInput): Promise<
             p: { title, weekdays: [], start_time: a.time, duration_min: minutes, one_off_date: a.date, starts_on: null },
           });
         } catch (err) {
-          const near = await freeNear(input, at, minutes, null);
-          const problem = problemOf(err, tz, today);
-          return { ok: false, changed: false, problem: near.length ? `${problem}; free near then: ${near.join(', ')}` : problem };
+          return failedWithNear(problemOf(err, tz, today), await freeNear(input, at, minutes, null));
         }
         return done();
       }
@@ -334,8 +360,20 @@ export async function runCallAction(a: CallAction, input: ActionInput): Promise<
   }
 }
 
+interface Near {
+  local: string; // "2026-11-05T20:00"
+  label: string; // "tomorrow 20:00"
+}
+
+const failedWithNear = (problem: string, near: Near[]): Outcome => ({
+  ok: false,
+  changed: false,
+  problem: near.length ? `${problem}; free near then: ${near.map((n) => n.label).join(', ')}` : problem,
+  offered: near.map((n) => n.local),
+});
+
 /** The free start closest before and closest after a time, for something this long. */
-async function freeNear({ db, state, now }: ActionInput, at: Date, minutes: number, ignore: string | null): Promise<string[]> {
+async function freeNear({ db, state, now }: ActionInput, at: Date, minutes: number, ignore: string | null): Promise<Near[]> {
   const tz = state.profile.timezone;
   const hour = 3_600_000;
   try {
@@ -352,7 +390,10 @@ async function freeNear({ db, state, now }: ActionInput, at: Date, minutes: numb
     const before = times.filter((d) => d < at).sort((x, y) => y.getTime() - x.getTime())[0];
     const after = times.filter((d) => d > at).sort((x, y) => x.getTime() - y.getTime())[0];
     const today = localDate(now, tz);
-    return [before, after].filter((d): d is Date => !!d).map((d) => `${dayWord(localDate(d, tz), today)} ${localTime(d, tz)}`);
+    return [before, after].filter((d): d is Date => !!d).map((d) => ({
+      local: `${localDate(d, tz)}T${localTime(d, tz)}`,
+      label: `${dayWord(localDate(d, tz), today)} ${localTime(d, tz)}`,
+    }));
   } catch {
     return [];
   }
